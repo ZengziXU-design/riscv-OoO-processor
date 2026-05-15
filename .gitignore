@@ -1,0 +1,22 @@
+# Python cache
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build directories
+build/
+sim/build/
+asic/build-*/
+obj_dir*/
+
+# Simulation waveforms / logs / generated outputs
+*.vcd
+*.fst
+*.log
+*.out
+*.dump
+*.jou
+*.rpt
+
+# OS files
+.DS_Store
