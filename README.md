@@ -110,3 +110,15 @@ The detailed methodology and quantitative results are described in the design re
 ## Design Report
 
 For the full architecture discussion, testing strategy, performance analysis, and physical design results, see [OoO_proc_design_report.pdf](OoO_proc_design_report.pdf).
+
+## Running An Evaluation
+
+With a compatible PyMTL3/Cornell course environment installed, the OoO processor can be evaluated through the `proc-sim` harness. From the repository root:
+
+```bash
+mkdir -p ./sim/build
+cd ./sim/build
+../proj3/proc-sim --impl ooo --input dotprod-unopt-unrolled --trace --verify --stats
+```
+
+This runs the OoO RTL model on the unrolled dot-product benchmark, prints the linetrace, checks the final memory/register results, and reports simulation statistics.
