@@ -27,8 +27,10 @@ module proj3_ProcDpath
   input  logic        reset,
 
   // Instruction Memory Port
-  output logic [31:0]  imem_reqstream_msg_addr,
-  input  mem_resp_4B_t imem_respstream_msg,
+  output logic [31:0]  imem_req_addr_lane0,
+  output logic [31:0]  imem_req_addr_lane1,
+  input  logic [31:0]  imem_resp_inst_lane0,
+  input  logic [31:0]  imem_resp_inst_lane1,
 
   // Data Memory Port
   output logic         dmem_reqstream_val,
@@ -63,12 +65,12 @@ module proj3_ProcDpath
   input  logic [2:0]   imm_type_I,
   input  logic [1:0]   op2_sel_I,
   input  logic [1:0]   csrr_sel_I,
-  input  logic         imul_istream_val_I,
-  input  logic         is_mem_I,
+  input  logic         alu_issue_fire_I,
+  input  logic         mul_issue_fire_I,
+  input  logic         mem_issue_fire_I,
   input  logic         is_sw_I,
 
   // X Stage Control Signals
-  input  logic         reg_en_X,
   input  logic [3:0]   alu_fn_X,
 
   // Writeback-side control signals
@@ -83,12 +85,14 @@ module proj3_ProcDpath
   input  logic         stats_en_wen_W,
 
   // status signals (dpath->ctrl)
-  output logic [31:0]  inst_D,
+  output logic [31:0]  inst_D_lane0,
+  output logic [31:0]  inst_D_lane1,
   output logic         iq_input_rdy_D,
   output logic         iq_dispatch_val,
   output logic [31:0]  iq_dispatch_inst,
 
   // D stage status
+  output logic         rob_alloc_rdy_D,
   output logic         rob_full_D,
   output logic         rename_rdy_D,
 
@@ -112,68 +116,105 @@ module proj3_ProcDpath
   //--------------------------------------------------------------------
 
   logic [31:0] pc_F;
-  logic [31:0] pc_plus4_F;
+  logic [31:0] pc_plus8_F;
 
-  vc_EnResetReg #(32, c_reset_vector - 32'd4) pc_reg_F
+  vc_EnResetReg #(32, c_reset_vector - 32'd8) pc_reg_F
   (
     .clk    (clk),
     .reset  (reset),
     .en     (reg_en_F),
-    .d      (pc_plus4_F),
+    .d      (pc_plus8_F),
     .q      (pc_F)
   );
 
-  vc_Incrementer #(32, 4) pc_incr_F
+  vc_Incrementer #(32, 8) pc_incr_F
   (
     .in   (pc_F),
-    .out  (pc_plus4_F)
+    .out  (pc_plus8_F)
   );
 
-  assign imem_reqstream_msg_addr = pc_plus4_F;
+  assign imem_req_addr_lane0 = pc_plus8_F;
+  assign imem_req_addr_lane1 = pc_plus8_F + 32'd4;
 
   //--------------------------------------------------------------------
   // D stage & PreDecode
   //--------------------------------------------------------------------
 
-  vc_EnResetReg #(32, c_reset_inst) inst_D_reg
+  vc_EnResetReg #(32, c_reset_inst) inst_D_lane0_reg
   (
     .clk    (clk),
     .reset  (reset),
     .en     (reg_en_D),
-    .d      (imem_respstream_msg.data),
-    .q      (inst_D)
+    .d      (imem_resp_inst_lane0),
+    .q      (inst_D_lane0)
   );
 
-  logic [4:0] predec_rs1_addr, predec_rs2_addr, predec_rd_addr;
-  logic       predec_rs1_valid, predec_rs2_valid, predec_rd_valid;
-  logic       is_csr_D;
-  logic       is_mem_D;
-
-  proj3_ProcPreDecode predecode_D
+  vc_EnResetReg #(32, c_reset_inst) inst_D_lane1_reg
   (
-    .inst       (inst_D),
-    .rs1_addr   (predec_rs1_addr),
-    .rs2_addr   (predec_rs2_addr),
-    .rd_addr    (predec_rd_addr),
-    .rs1_valid  (predec_rs1_valid),
-    .rs2_valid  (predec_rs2_valid),
-    .rd_valid   (predec_rd_valid),
-    .is_csr     (is_csr_D),
-    .is_mem     (is_mem_D)
+    .clk    (clk),
+    .reset  (reset),
+    .en     (reg_en_D),
+    .d      (imem_resp_inst_lane1),
+    .q      (inst_D_lane1)
+  );
+
+  logic [4:0] predec_rs1_addr_lane0, predec_rs2_addr_lane0, predec_rd_addr_lane0;
+  logic       predec_rs1_valid_lane0, predec_rs2_valid_lane0, predec_rd_valid_lane0;
+  logic       is_csr_D_lane0;
+  logic       is_mem_D_lane0;
+
+  logic [4:0] predec_rs1_addr_lane1, predec_rs2_addr_lane1, predec_rd_addr_lane1;
+  logic       predec_rs1_valid_lane1, predec_rs2_valid_lane1, predec_rd_valid_lane1;
+  logic       is_csr_D_lane1;
+  logic       is_mem_D_lane1;
+
+  proj3_ProcPreDecode predecode_D_lane0
+  (
+    .inst       (inst_D_lane0),
+    .rs1_addr   (predec_rs1_addr_lane0),
+    .rs2_addr   (predec_rs2_addr_lane0),
+    .rd_addr    (predec_rd_addr_lane0),
+    .rs1_valid  (predec_rs1_valid_lane0),
+    .rs2_valid  (predec_rs2_valid_lane0),
+    .rd_valid   (predec_rd_valid_lane0),
+    .is_csr     (is_csr_D_lane0),
+    .is_mem     (is_mem_D_lane0)
+  );
+
+  proj3_ProcPreDecode predecode_D_lane1
+  (
+    .inst       (inst_D_lane1),
+    .rs1_addr   (predec_rs1_addr_lane1),
+    .rs2_addr   (predec_rs2_addr_lane1),
+    .rd_addr    (predec_rd_addr_lane1),
+    .rs1_valid  (predec_rs1_valid_lane1),
+    .rs2_valid  (predec_rs2_valid_lane1),
+    .rd_valid   (predec_rd_valid_lane1),
+    .is_csr     (is_csr_D_lane1),
+    .is_mem     (is_mem_D_lane1)
   );
 
   //--------------------------------------------------------------------
   // Rename Unit (D stage)
   //--------------------------------------------------------------------
 
-  logic [c_preg_addr_nbits-1:0] rs1_paddr_D;
-  logic [c_preg_addr_nbits-1:0] rs2_paddr_D;
-  logic                         rs1_paddr_valid_D;
-  logic                         rs2_paddr_valid_D;
+  logic [c_preg_addr_nbits-1:0] rs1_paddr_D_lane0;
+  logic [c_preg_addr_nbits-1:0] rs2_paddr_D_lane0;
+  logic                         rs1_paddr_valid_D_lane0;
+  logic                         rs2_paddr_valid_D_lane0;
 
-  logic                         rd_rename_valid_D;
-  logic [c_preg_addr_nbits-1:0] rd_paddr_old_D;
-  logic [c_preg_addr_nbits-1:0] rd_paddr_new_D;
+  logic [c_preg_addr_nbits-1:0] rs1_paddr_D_lane1;
+  logic [c_preg_addr_nbits-1:0] rs2_paddr_D_lane1;
+  logic                         rs1_paddr_valid_D_lane1;
+  logic                         rs2_paddr_valid_D_lane1;
+
+  logic                         rd_rename_valid_D_lane0;
+  logic [c_preg_addr_nbits-1:0] rd_paddr_old_D_lane0;
+  logic [c_preg_addr_nbits-1:0] rd_paddr_new_D_lane0;
+
+  logic                         rd_rename_valid_D_lane1;
+  logic [c_preg_addr_nbits-1:0] rd_paddr_old_D_lane1;
+  logic [c_preg_addr_nbits-1:0] rd_paddr_new_D_lane1;
 
   logic                         commit_rd_valid_to_rename_C;
   logic [c_preg_addr_nbits-1:0] commit_rd_paddr_old_C;
@@ -188,22 +229,39 @@ module proj3_ProcDpath
     .rename_en_D        (rob_alloc_req_D),
     .rename_rdy_D       (rename_rdy_D),
 
-    .rs1_addr_D         (predec_rs1_addr),
-    .rs2_addr_D         (predec_rs2_addr),
-    .rd_addr_D          (predec_rd_addr),
+    .rs1_addr_D_lane0         (predec_rs1_addr_lane0),
+    .rs2_addr_D_lane0         (predec_rs2_addr_lane0),
+    .rd_addr_D_lane0          (predec_rd_addr_lane0),
 
-    .rs1_valid_D        (predec_rs1_valid),
-    .rs2_valid_D        (predec_rs2_valid),
-    .rd_valid_D         (predec_rd_valid),
+    .rs1_valid_D_lane0        (predec_rs1_valid_lane0),
+    .rs2_valid_D_lane0        (predec_rs2_valid_lane0),
+    .rd_valid_D_lane0         (predec_rd_valid_lane0),
 
-    .rs1_paddr_D        (rs1_paddr_D),
-    .rs2_paddr_D        (rs2_paddr_D),
-    .rs1_paddr_valid_D  (rs1_paddr_valid_D),
-    .rs2_paddr_valid_D  (rs2_paddr_valid_D),
+    .rs1_addr_D_lane1         (predec_rs1_addr_lane1),
+    .rs2_addr_D_lane1         (predec_rs2_addr_lane1),
+    .rd_addr_D_lane1          (predec_rd_addr_lane1),
 
-    .rd_rename_valid_D  (rd_rename_valid_D),
-    .rd_paddr_old_D     (rd_paddr_old_D),
-    .rd_paddr_new_D     (rd_paddr_new_D),
+    .rs1_valid_D_lane1        (predec_rs1_valid_lane1),
+    .rs2_valid_D_lane1        (predec_rs2_valid_lane1),
+    .rd_valid_D_lane1         (predec_rd_valid_lane1),
+
+    .rs1_paddr_D_lane0        (rs1_paddr_D_lane0),
+    .rs2_paddr_D_lane0        (rs2_paddr_D_lane0),
+    .rs1_paddr_valid_D_lane0  (rs1_paddr_valid_D_lane0),
+    .rs2_paddr_valid_D_lane0  (rs2_paddr_valid_D_lane0),
+
+    .rs1_paddr_D_lane1        (rs1_paddr_D_lane1),
+    .rs2_paddr_D_lane1        (rs2_paddr_D_lane1),
+    .rs1_paddr_valid_D_lane1  (rs1_paddr_valid_D_lane1),
+    .rs2_paddr_valid_D_lane1  (rs2_paddr_valid_D_lane1),
+
+    .rd_rename_valid_D_lane0  (rd_rename_valid_D_lane0),
+    .rd_paddr_old_D_lane0     (rd_paddr_old_D_lane0),
+    .rd_paddr_new_D_lane0     (rd_paddr_new_D_lane0),
+
+    .rd_rename_valid_D_lane1  (rd_rename_valid_D_lane1),
+    .rd_paddr_old_D_lane1     (rd_paddr_old_D_lane1),
+    .rd_paddr_new_D_lane1     (rd_paddr_new_D_lane1),
 
     .commit_rd_valid_C      (commit_rd_valid_to_rename_C),
     .commit_rd_paddr_old_C  (commit_rd_paddr_old_C)
@@ -213,7 +271,8 @@ module proj3_ProcDpath
   // ROB Instantiation (D / W / C stages)
   //--------------------------------------------------------------------
 
-  logic [2:0]  alloc_tag_D;
+  logic [2:0]  alloc_tag_D_lane0;
+  logic [2:0]  alloc_tag_D_lane1;
   logic [2:0]  rob_tag_X;
   logic [2:0]  rob_tag_Y3;
 
@@ -249,12 +308,20 @@ module proj3_ProcDpath
     .clk                (clk),
     .reset              (reset),
 
-    .alloc_req          (rob_alloc_req_D),
-    .alloc_has_rd       (rd_rename_valid_D),
-    .alloc_rd_addr      (predec_rd_addr),
-    .alloc_rd_paddr_old (rd_paddr_old_D),
-    .alloc_tag          (alloc_tag_D),
-    .rob_full           (rob_full_D),
+    .alloc_req_lane0          (rob_alloc_req_D),
+    .alloc_has_rd_lane0       (rd_rename_valid_D_lane0),
+    .alloc_rd_addr_lane0      (predec_rd_addr_lane0),
+    .alloc_rd_paddr_old_lane0 (rd_paddr_old_D_lane0),
+
+    .alloc_req_lane1          (rob_alloc_req_D),
+    .alloc_has_rd_lane1       (rd_rename_valid_D_lane1),
+    .alloc_rd_addr_lane1      (predec_rd_addr_lane1),
+    .alloc_rd_paddr_old_lane1 (rd_paddr_old_D_lane1),
+
+    .alloc_tag_lane0          (alloc_tag_D_lane0),
+    .alloc_tag_lane1          (alloc_tag_D_lane1),
+    .rob_alloc_rdy_D          (rob_alloc_rdy_D),
+    .rob_full                 (rob_full_D),
 
     .wb0_req            (rob_fill_val_W),
     .wb0_tag            (rob_tag_X),
@@ -287,7 +354,7 @@ module proj3_ProcDpath
   logic                         mem_issue_rdy;
 
   proj3_ProcIssueQueue #(
-    .p_num_entries    (4),
+    .p_num_entries    (8),
     .p_prf_addr_nbits (c_preg_addr_nbits),
     .p_rob_tag_nbits  (3)
   ) iq
@@ -295,20 +362,33 @@ module proj3_ProcDpath
     .clk               (clk),
     .reset             (reset),
 
-    .input_val         (iq_input_val_D),
+    .input_val_lane0   (iq_input_val_D),
+    .input_val_lane1   (iq_input_val_D),
     .input_rdy         (iq_input_rdy_D),
 
-    .input_inst        (inst_D),
-    .input_rob_tag     (alloc_tag_D),
-    .input_is_csr      (is_csr_D),
-    .input_is_mem      (is_mem_D),
+    .input_inst_lane0        (inst_D_lane0),
+    .input_rob_tag_lane0     (alloc_tag_D_lane0),
+    .input_is_csr_lane0      (is_csr_D_lane0),
+    .input_is_mem_lane0      (is_mem_D_lane0),
 
-    .input_rs1_addr    (rs1_paddr_D),
-    .input_rs1_valid   (rs1_paddr_valid_D),
-    .input_rs2_addr    (rs2_paddr_D),
-    .input_rs2_valid   (rs2_paddr_valid_D),
-    .input_rd_addr     (rd_paddr_new_D),
-    .input_rd_valid    (rd_rename_valid_D),
+    .input_inst_lane1        (inst_D_lane1),
+    .input_rob_tag_lane1     (alloc_tag_D_lane1),
+    .input_is_csr_lane1      (is_csr_D_lane1),
+    .input_is_mem_lane1      (is_mem_D_lane1),
+
+    .input_rs1_addr_lane0    (rs1_paddr_D_lane0),
+    .input_rs1_valid_lane0   (rs1_paddr_valid_D_lane0),
+    .input_rs2_addr_lane0    (rs2_paddr_D_lane0),
+    .input_rs2_valid_lane0   (rs2_paddr_valid_D_lane0),
+    .input_rd_addr_lane0     (rd_paddr_new_D_lane0),
+    .input_rd_valid_lane0    (rd_rename_valid_D_lane0),
+
+    .input_rs1_addr_lane1    (rs1_paddr_D_lane1),
+    .input_rs1_valid_lane1   (rs1_paddr_valid_D_lane1),
+    .input_rs2_addr_lane1    (rs2_paddr_D_lane1),
+    .input_rs2_valid_lane1   (rs2_paddr_valid_D_lane1),
+    .input_rd_addr_lane1     (rd_paddr_new_D_lane1),
+    .input_rd_valid_lane1    (rd_rename_valid_D_lane1),
 
     .dispatch_val      (iq_dispatch_val),
     .dispatch_rdy      (iq_dispatch_rdy),
@@ -334,9 +414,6 @@ module proj3_ProcDpath
   // Issue stage (RR merged into Issue)
   //--------------------------------------------------------------------
 
-  logic        iq_dispatch_fire;
-  logic        issue_to_x_fire;
-  logic        load_issue_fire;
   logic [31:0] dispatch_imm_I;
 
   logic [31:0] prf_rdata0_I;
@@ -346,10 +423,6 @@ module proj3_ProcDpath
   logic [31:0] op2_issue;
   logic [31:0] csrr_data_I;
   logic [31:0] num_cores;
-
-  assign iq_dispatch_fire = iq_dispatch_val && iq_dispatch_rdy;
-  assign issue_to_x_fire  = iq_dispatch_fire && !imul_istream_val_I && !is_mem_I;
-  assign load_issue_fire  = iq_dispatch_fire && is_mem_I;
 
   assign num_cores        = p_num_cores;
 
@@ -421,7 +494,7 @@ module proj3_ProcDpath
   (
     .clk   (clk),
     .reset (reset),
-    .en    (issue_to_x_fire),
+    .en    (alu_issue_fire_I),
     .d     (op1_issue),
     .q     (op1_X)
   );
@@ -430,7 +503,7 @@ module proj3_ProcDpath
   (
     .clk   (clk),
     .reset (reset),
-    .en    (issue_to_x_fire),
+    .en    (alu_issue_fire_I),
     .d     (op2_issue),
     .q     (op2_X)
   );
@@ -439,7 +512,7 @@ module proj3_ProcDpath
   (
     .clk   (clk),
     .reset (reset),
-    .en    (issue_to_x_fire),
+    .en    (alu_issue_fire_I),
     .d     (iq_dispatch_rob_tag),
     .q     (rob_tag_X)
   );
@@ -448,7 +521,7 @@ module proj3_ProcDpath
   (
     .clk   (clk),
     .reset (reset),
-    .en    (issue_to_x_fire),
+    .en    (alu_issue_fire_I),
     .d     (iq_dispatch_rd_addr),
     .q     (rd_paddr_X)
   );
@@ -471,9 +544,6 @@ module proj3_ProcDpath
   logic [2:0] mul_tag_Y0, mul_tag_Y1, mul_tag_Y2, mul_tag_Y3;
   logic [c_preg_addr_nbits-1:0] mul_pdst_Y0, mul_pdst_Y1, mul_pdst_Y2, mul_pdst_Y3;
 
-  logic                         mul_issue_fire;
-  assign mul_issue_fire = iq_dispatch_fire && imul_istream_val_I && imul_istream_rdy_I;
-
   always_ff @(posedge clk) begin
     if ( reset ) begin
       mul_tag_Y0  <= '0;
@@ -487,7 +557,7 @@ module proj3_ProcDpath
       mul_pdst_Y3 <= '0;
     end
     else begin
-      if ( mul_issue_fire ) begin
+      if ( mul_issue_fire_I ) begin
         mul_tag_Y0  <= iq_dispatch_rob_tag;
         mul_pdst_Y0 <= iq_dispatch_rd_addr;
       end
@@ -509,7 +579,7 @@ module proj3_ProcDpath
   (
     .clk         (clk),
     .reset       (reset),
-    .istream_val (imul_istream_val_I),
+    .istream_val (mul_issue_fire_I),
     .istream_rdy (imul_istream_rdy_I),
     .istream_msg ({op1_issue, op2_issue}),
     .ostream_val (imul_ostream_val_W),
@@ -531,7 +601,7 @@ module proj3_ProcDpath
 
     .mem_issue_rdy             (mem_issue_rdy),
 
-    .istream_val              (load_issue_fire),
+    .istream_val              (mem_issue_fire_I),
     .istream_rdy              (load_istream_rdy_I),
     .istream_base             (prf_rdata0_I),
     .istream_imm              (dispatch_imm_I),

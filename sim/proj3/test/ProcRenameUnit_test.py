@@ -7,53 +7,88 @@ from pymtl3.stdlib.test_utils import run_test_vector_sim
 
 from proj3.ProcRenameUnit import ProcRenameUnit
 
+TEST_FMT = (
+  'rename_en_D '
+  'rs1_addr_D_lane0 rs2_addr_D_lane0 rd_addr_D_lane0 '
+  'rs1_valid_D_lane0 rs2_valid_D_lane0 rd_valid_D_lane0 '
+  'rs1_addr_D_lane1 rs2_addr_D_lane1 rd_addr_D_lane1 '
+  'rs1_valid_D_lane1 rs2_valid_D_lane1 rd_valid_D_lane1 '
+  'commit_rd_valid_C commit_rd_paddr_old_C '
+  'rename_rdy_D* '
+  'rs1_paddr_D_lane0* rs2_paddr_D_lane0* '
+  'rs1_paddr_valid_D_lane0* rs2_paddr_valid_D_lane0* '
+  'rd_rename_valid_D_lane0* rd_paddr_old_D_lane0* rd_paddr_new_D_lane0* '
+  'rs1_paddr_D_lane1* rs2_paddr_D_lane1* '
+  'rs1_paddr_valid_D_lane1* rs2_paddr_valid_D_lane1* '
+  'rd_rename_valid_D_lane1* rd_paddr_old_D_lane1* rd_paddr_new_D_lane1*'
+)
+
 #-------------------------------------------------------------------------
-# test sequential behavior of rename unit
+# test dual-lane sequential behavior of rename unit
 #-------------------------------------------------------------------------
 
-def test_rename_basic( cmdline_opts ):
+def test_rename_dual_lane_basic( cmdline_opts ):
   dut = ProcRenameUnit()
 
-  # Note: The test vectors are executed sequentially, one per clock cycle.
-  # Initial State after reset: 
-  #   - rat[i] == i (Register Alias Table maps architectural register i to physical register i)
-  #   - freelist_free[32..63] == 1, others == 0. First available free register is p32.
+  # Initial state after reset:
+  #   - RAT maps x0..x31 to p0..p31
+  #   - p32..p63 are free, so lane0 gets p32 and lane1 gets p33
+  #   - lane1 sees lane0's same-cycle destination rename
 
   run_test_vector_sim( dut, [
-    ('rename_en_D rs1_addr_D rs2_addr_D rd_addr_D rs1_valid_D rs2_valid_D rd_valid_D commit_rd_valid_C commit_rd_paddr_old_C '
-     'rename_rdy_D* rs1_paddr_D* rs2_paddr_D* rs1_paddr_valid_D* rs2_paddr_valid_D* rd_rename_valid_D* rd_paddr_old_D* rd_paddr_new_D*'),
-    
-    # Cycle 0: No rename operation (rename_en = 0). Read-only test.
-    # Read x1, x2; write to x3. Expected outputs:
-    #   - rs1_paddr should map to p1, rs2_paddr should map to p2 (current RAT mapping)
-    #   - rd_paddr_old should be p3 (old physical mapping of x3)
-    #   - Next available free register should be p32
-    #   - rd_rename_valid_D = 1 (x3 is a valid rename target)
-    [ 0,          1,         2,         3,        1,          1,          1,         0,                0,
-      1,            1,           2,           1,                 1,                 1,                 3,              32 ],
-    
-    # Cycle 1: Execute rename operation (rename_en = 1) -> x3 will be mapped to p32.
-    # Combinational output remains the same as Cycle 0 (lookahead from before the update).
-    # After clock edge, the RAT will be updated: x3 -> p32
-    [ 1,          1,         2,         3,        0,          0,          1,         0,                0,
-      1,            1,           2,           0,                 0,                 1,                 3,              32 ],
-    
-    # Cycle 2: Verify x3 is now mapped to p32. Attempt to rename x0.
-    # x0 cannot be renamed (rd_rename_valid_D must be 0), so the free list is not consumed.
-    # Next available free register should be p33 (p32 is now taken).
-    [ 1,          3,         0,         0,        1,          1,          1,         0,                0,
-      1,            32,          0,           1,                 1,                 0,                 0,              33 ],
-      
-    # Cycle 3: Trigger commit operation to reclaim old physical register.
-    # Commit x3's old physical register p3 back to the free list.
-    # After clock edge, p3 becomes available again.
-    [ 0,          0,         0,         0,        0,          0,          0,         1,                3,
-      1,            0,           0,           0,                 0,                 0,                 0,              33 ],
-      
-    # Cycle 4: Verify commit effect. Reclaimed register p3 is now the first available free register.
-    # (Freelist scans from low to high, so p3 reappears before p33)
-    # Rename x4 to the newly reclaimed physical register p3.
-    [ 1,          0,         0,         4,        0,          0,          1,         0,                0,
-      1,            0,           0,           0,                 0,                 1,                 4,              3  ],
-      
+    TEST_FMT,
+
+    # Read-only: lane1 rs1=x3 forwards lane0's new p32.
+    [ 0,
+      1, 2, 3,   1, 1, 1,
+      3, 4, 5,   1, 1, 1,
+      0, 0,
+      1,
+      1, 2,      1, 1,      1, 3, 32,
+      32, 4,     1, 1,      1, 5, 33 ],
+
+    # Commit the pair: x3->p32, x5->p33.
+    [ 1,
+      1, 2, 3,   1, 1, 1,
+      3, 4, 5,   1, 1, 1,
+      0, 0,
+      1,
+      1, 2,      1, 1,      1, 3, 32,
+      32, 4,     1, 1,      1, 5, 33 ],
+
+    # x0 destination does not allocate. lane1 uses first free p34.
+    [ 1,
+      3, 5, 0,   1, 1, 1,
+      5, 0, 6,   1, 0, 1,
+      0, 0,
+      1,
+      32, 33,    1, 1,      0, 0, 34,
+      33, 0,     1, 0,      1, 6, 34 ],
+
+    # WAW within the pair: lane1 old pdst is lane0 new p35.
+    [ 1,
+      0, 0, 7,   0, 0, 1,
+      0, 0, 7,   0, 0, 1,
+      0, 0,
+      1,
+      0, 0,      0, 0,      1, 7, 35,
+      0, 0,      0, 0,      1, 35, 36 ],
+
+    # Reclaim p3 at commit; it becomes visible on the next cycle.
+    [ 0,
+      7, 0, 0,   1, 0, 0,
+      0, 0, 0,   0, 0, 0,
+      1, 3,
+      1,
+      36, 0,     1, 0,      0, 0, 37,
+      0, 0,      0, 0,      0, 0, 37 ],
+
+    # The reclaimed low-numbered preg p3 is allocated before p37.
+    [ 1,
+      0, 0, 0,   0, 0, 0,
+      0, 0, 8,   0, 0, 1,
+      0, 0,
+      1,
+      0, 0,      0, 0,      0, 0, 3,
+      0, 0,      0, 0,      1, 8, 3 ],
   ], cmdline_opts )

@@ -11,13 +11,20 @@ class ProcReorderBuffer( VerilogPlaceholder, Component ):
     # --------------------------------------------------------------------
     # Dispatch / Allocate Port
     # --------------------------------------------------------------------
-    s.alloc_req           = InPort ( 1 )
-    s.alloc_has_rd        = InPort ( 1 )
-    s.alloc_rd_addr       = InPort ( 5 )
-    s.alloc_rd_paddr_old  = InPort ( 6 )
+    s.alloc_req_lane0          = InPort ( 1 )
+    s.alloc_has_rd_lane0       = InPort ( 1 )
+    s.alloc_rd_addr_lane0      = InPort ( 5 )
+    s.alloc_rd_paddr_old_lane0 = InPort ( 6 )
 
-    s.alloc_tag           = OutPort( 3 )  # fixed to 3 bits for p_num_entries=8
-    s.rob_full            = OutPort( 1 )
+    s.alloc_req_lane1          = InPort ( 1 )
+    s.alloc_has_rd_lane1       = InPort ( 1 )
+    s.alloc_rd_addr_lane1      = InPort ( 5 )
+    s.alloc_rd_paddr_old_lane1 = InPort ( 6 )
+
+    s.alloc_tag_lane0          = OutPort( 3 )  # fixed to 3 bits for p_num_entries=8
+    s.alloc_tag_lane1          = OutPort( 3 )
+    s.rob_alloc_rdy_D          = OutPort( 1 )
+    s.rob_full                 = OutPort( 1 )
 
     # --------------------------------------------------------------------
     # Writeback / Complete Port 0 (ALU/CSR)

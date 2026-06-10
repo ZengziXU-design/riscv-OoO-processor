@@ -22,12 +22,19 @@ module proj3_ProcReorderBuffer #(
   //---------------------------------------------------------
   // D stage - Allocate
   //---------------------------------------------------------
-  input  logic                   alloc_req,            // request allocate an entry
-  input  logic                   alloc_has_rd,         // whether the instruction has rd after rename
-  input  logic [4:0]             alloc_rd_addr,        // architectural rd (kept for Line Trace / Debug)
-  input  logic [p_preg_addr_nbits-1:0] alloc_rd_paddr_old, // old physical destination (MUST KEEP for freeing)
+  input  logic                   alloc_req_lane0,            // request allocate an entry for older inst
+  input  logic                   alloc_has_rd_lane0,         // whether lane0 has rd after rename
+  input  logic [4:0]             alloc_rd_addr_lane0,        // architectural rd (Line Trace / Debug)
+  input  logic [p_preg_addr_nbits-1:0] alloc_rd_paddr_old_lane0, // old physical destination
 
-  output logic [$clog2(p_num_entries)-1:0] alloc_tag,  // ROB tag = tail
+  input  logic                   alloc_req_lane1,            // request allocate an entry for younger inst
+  input  logic                   alloc_has_rd_lane1,         // whether lane1 has rd after rename
+  input  logic [4:0]             alloc_rd_addr_lane1,        // architectural rd (Line Trace / Debug)
+  input  logic [p_preg_addr_nbits-1:0] alloc_rd_paddr_old_lane1, // old physical destination
+
+  output logic [$clog2(p_num_entries)-1:0] alloc_tag_lane0,  // ROB tag for lane0
+  output logic [$clog2(p_num_entries)-1:0] alloc_tag_lane1,  // ROB tag for lane1
+  output logic                   rob_alloc_rdy_D,
   output logic                   rob_full,
 
   //---------------------------------------------------------
@@ -63,6 +70,16 @@ module proj3_ProcReorderBuffer #(
   //----------------------------------------------------------------------
   localparam int c_tag_nbits   = ( p_num_entries > 1 ) ? $clog2( p_num_entries ) : 1;
   localparam int c_count_nbits = $clog2( p_num_entries + 1 );
+  localparam logic [c_count_nbits-1:0] c_dual_alloc_count = c_count_nbits'(2);
+
+  function automatic [c_tag_nbits-1:0] incr_ptr
+  (
+    input logic [c_tag_nbits-1:0] ptr
+  );
+  begin
+    incr_ptr = ( ptr == p_num_entries - 1 ) ? '0 : ptr + 1'b1;
+  end
+  endfunction
 
   //----------------------------------------------------------------------
   // Internal storage for ROB entries
@@ -81,6 +98,15 @@ module proj3_ProcReorderBuffer #(
   logic [c_tag_nbits-1:0]   tail;
   logic [c_count_nbits-1:0] count;
 
+  logic [c_tag_nbits-1:0]   tail_plus1;
+  logic [c_tag_nbits-1:0]   tail_plus2;
+  logic [c_tag_nbits-1:0]   alloc_slot_lane1;
+  logic [c_count_nbits-1:0] num_free_entries;
+
+  logic                     do_alloc_lane0;
+  logic                     do_alloc_lane1;
+  logic [1:0]               do_alloc_count;
+
   //----------------------------------------------------------------------
   // Combinational status logic
   //----------------------------------------------------------------------
@@ -88,10 +114,25 @@ module proj3_ProcReorderBuffer #(
   logic rob_empty;
   assign rob_empty = ( count == 0 );
 
-  assign alloc_tag = tail;
+  assign tail_plus1 = incr_ptr( tail );
+  assign tail_plus2 = incr_ptr( tail_plus1 );
 
-  logic do_alloc;
-  assign do_alloc = alloc_req && !rob_full;
+  assign alloc_slot_lane1 = alloc_req_lane0 ? tail_plus1 : tail;
+
+  assign alloc_tag_lane0 = tail;
+  assign alloc_tag_lane1 = alloc_slot_lane1;
+
+  assign num_free_entries = p_num_entries - count;
+
+  // The frontend dispatches a two-instruction D-stage group atomically.
+  // Keep ready independent of alloc_req_lane* so ctrl can use this signal
+  // to form the final allocate fire without creating a combinational loop.
+  assign rob_alloc_rdy_D = ( c_dual_alloc_count <= num_free_entries );
+
+  assign do_alloc_lane0  = alloc_req_lane0 && rob_alloc_rdy_D;
+  assign do_alloc_lane1  = alloc_req_lane1 && rob_alloc_rdy_D;
+  assign do_alloc_count  = { 1'b0, do_alloc_lane0 }
+                         + { 1'b0, do_alloc_lane1 };
 
   //----------------------------------------------------------------------
   // Commit logic
@@ -119,21 +160,31 @@ module proj3_ProcReorderBuffer #(
       end
     end
     else begin
-      // Counter update
-      if ( do_alloc && !commit_val )
-        count <= count + 1'b1;
-      else if ( !do_alloc && commit_val )
-        count <= count - 1'b1;
+      // Counter update. Commit remains single-wide.
+      count <= count + do_alloc_count - { 1'b0, commit_val };
 
       // D-stage allocate
-      if ( do_alloc ) begin
-        tail <= ( tail == p_num_entries - 1 ) ? '0 : tail + 1'b1;
-
+      if ( do_alloc_lane0 ) begin
         v_entry[tail]      <= 1'b1;
         pending[tail]      <= 1'b1;
-        rd_valid[tail]     <= alloc_has_rd;
-        rd_addr[tail]      <= alloc_rd_addr;
-        rd_paddr_old[tail] <= alloc_rd_paddr_old;
+        rd_valid[tail]     <= alloc_has_rd_lane0;
+        rd_addr[tail]      <= alloc_rd_addr_lane0;
+        rd_paddr_old[tail] <= alloc_rd_paddr_old_lane0;
+      end
+
+      if ( do_alloc_lane1 ) begin
+        v_entry[alloc_slot_lane1]      <= 1'b1;
+        pending[alloc_slot_lane1]      <= 1'b1;
+        rd_valid[alloc_slot_lane1]     <= alloc_has_rd_lane1;
+        rd_addr[alloc_slot_lane1]      <= alloc_rd_addr_lane1;
+        rd_paddr_old[alloc_slot_lane1] <= alloc_rd_paddr_old_lane1;
+      end
+
+      if ( do_alloc_count == 2'd2 ) begin
+        tail <= tail_plus2;
+      end
+      else if ( do_alloc_count == 2'd1 ) begin
+        tail <= tail_plus1;
       end
 
       // C-stage commit

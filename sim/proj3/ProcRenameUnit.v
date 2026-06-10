@@ -14,35 +14,53 @@ module proj3_ProcRenameUnit #(
   input  logic clk,
   input  logic reset,
 
-  input  logic rename_en_D,  // perform rename update in D stage
-  output logic rename_rdy_D, // Has free physical register for rename
+  input  logic rename_en_D,  // perform rename update for both D-stage lanes
+  output logic rename_rdy_D, // Has enough free physical registers for both lanes
 
   // --------------------------------------------------
   // From PreDecode (D stage)
   // --------------------------------------------------
-  input  logic [4:0] rs1_addr_D,
-  input  logic [4:0] rs2_addr_D,
-  input  logic [4:0] rd_addr_D,
+  input  logic [4:0] rs1_addr_D_lane0,
+  input  logic [4:0] rs2_addr_D_lane0,
+  input  logic [4:0] rd_addr_D_lane0,
 
-  input  logic       rs1_valid_D,
-  input  logic       rs2_valid_D,
-  input  logic       rd_valid_D,
+  input  logic       rs1_valid_D_lane0,
+  input  logic       rs2_valid_D_lane0,
+  input  logic       rd_valid_D_lane0,
+
+  input  logic [4:0] rs1_addr_D_lane1,
+  input  logic [4:0] rs2_addr_D_lane1,
+  input  logic [4:0] rd_addr_D_lane1,
+
+  input  logic       rs1_valid_D_lane1,
+  input  logic       rs2_valid_D_lane1,
+  input  logic       rd_valid_D_lane1,
 
   // --------------------------------------------------
   // To IQ (renamed physical register addresses)
   // --------------------------------------------------
-  output logic [p_preg_addr_nbits-1:0] rs1_paddr_D,
-  output logic [p_preg_addr_nbits-1:0] rs2_paddr_D,
+  output logic [p_preg_addr_nbits-1:0] rs1_paddr_D_lane0,
+  output logic [p_preg_addr_nbits-1:0] rs2_paddr_D_lane0,
 
-  output logic                         rs1_paddr_valid_D,
-  output logic                         rs2_paddr_valid_D,
+  output logic                         rs1_paddr_valid_D_lane0,
+  output logic                         rs2_paddr_valid_D_lane0,
+
+  output logic [p_preg_addr_nbits-1:0] rs1_paddr_D_lane1,
+  output logic [p_preg_addr_nbits-1:0] rs2_paddr_D_lane1,
+
+  output logic                         rs1_paddr_valid_D_lane1,
+  output logic                         rs2_paddr_valid_D_lane1,
 
   // --------------------------------------------------
   // To ROB allocate (rename metadata)
   // --------------------------------------------------
-  output logic                         rd_rename_valid_D,
-  output logic [p_preg_addr_nbits-1:0] rd_paddr_old_D,
-  output logic [p_preg_addr_nbits-1:0] rd_paddr_new_D, // to ROB and IQ
+  output logic                         rd_rename_valid_D_lane0,
+  output logic [p_preg_addr_nbits-1:0] rd_paddr_old_D_lane0,
+  output logic [p_preg_addr_nbits-1:0] rd_paddr_new_D_lane0, // to ROB and IQ
+
+  output logic                         rd_rename_valid_D_lane1,
+  output logic [p_preg_addr_nbits-1:0] rd_paddr_old_D_lane1,
+  output logic [p_preg_addr_nbits-1:0] rd_paddr_new_D_lane1, // to ROB and IQ
 
   // --------------------------------------------------
   // Commit feedback from ROB
@@ -71,26 +89,50 @@ module proj3_ProcRenameUnit #(
   // Internal allocation helper
   // --------------------------------------------------
 
-  logic [p_preg_addr_nbits-1:0] freelist_alloc_preg;
-  logic                         freelist_has_free;
+  logic [p_preg_addr_nbits-1:0] freelist_alloc_preg_lane0;
+  logic [p_preg_addr_nbits-1:0] freelist_alloc_preg_lane1;
+  logic                         freelist_has_free_lane0;
+  logic                         freelist_has_free_lane1;
+
+  logic [1:0]                   rename_num_needed;
 
   // --------------------------------------------------
   // Simple pass-through valids
   // --------------------------------------------------
 
-  assign rs1_paddr_valid_D = rs1_valid_D;
-  assign rs2_paddr_valid_D = rs2_valid_D;
+  assign rs1_paddr_valid_D_lane0 = rs1_valid_D_lane0;
+  assign rs2_paddr_valid_D_lane0 = rs2_valid_D_lane0;
+  assign rs1_paddr_valid_D_lane1 = rs1_valid_D_lane1;
+  assign rs2_paddr_valid_D_lane1 = rs2_valid_D_lane1;
 
   // Really needs a new physical destination?
-  assign rd_rename_valid_D = rd_valid_D && ( rd_addr_D != 5'd0 );
+  assign rd_rename_valid_D_lane0 = rd_valid_D_lane0 && ( rd_addr_D_lane0 != 5'd0 );
+  assign rd_rename_valid_D_lane1 = rd_valid_D_lane1 && ( rd_addr_D_lane1 != 5'd0 );
 
   // --------------------------------------------------
   // RAT lookup (combinational)
   // --------------------------------------------------
 
-  assign rs1_paddr_D    = rat[rs1_addr_D];
-  assign rs2_paddr_D    = rat[rs2_addr_D];
-  assign rd_paddr_old_D = rat[rd_addr_D];
+  assign rs1_paddr_D_lane0    = rat[rs1_addr_D_lane0];
+  assign rs2_paddr_D_lane0    = rat[rs2_addr_D_lane0];
+  assign rd_paddr_old_D_lane0 = rat[rd_addr_D_lane0];
+
+  // Lane 1 observes lane 0's same-cycle RAT update. This handles both
+  // RAW dependencies and WAW old-destination metadata within the fetch pair.
+  assign rs1_paddr_D_lane1
+    = ( rd_rename_valid_D_lane0 && ( rs1_addr_D_lane1 == rd_addr_D_lane0 ) )
+    ? rd_paddr_new_D_lane0
+    : rat[rs1_addr_D_lane1];
+
+  assign rs2_paddr_D_lane1
+    = ( rd_rename_valid_D_lane0 && ( rs2_addr_D_lane1 == rd_addr_D_lane0 ) )
+    ? rd_paddr_new_D_lane0
+    : rat[rs2_addr_D_lane1];
+
+  assign rd_paddr_old_D_lane1
+    = ( rd_rename_valid_D_lane0 && ( rd_addr_D_lane1 == rd_addr_D_lane0 ) )
+    ? rd_paddr_new_D_lane0
+    : rat[rd_addr_D_lane1];
 
   // --------------------------------------------------
   // Free list allocate candidate (combinational)
@@ -108,19 +150,38 @@ module proj3_ProcRenameUnit #(
   always_comb begin
     int i;
 
-    freelist_has_free   = 1'b0;
-    freelist_alloc_preg = '0;
+    freelist_has_free_lane0   = 1'b0;
+    freelist_has_free_lane1   = 1'b0;
+    freelist_alloc_preg_lane0 = '0;
+    freelist_alloc_preg_lane1 = '0;
 
     // p0 is never allocatable; scan p1 ~ p63
     for ( i = 1; i < c_num_phys_regs; i = i + 1 ) begin
-      if ( !freelist_has_free && freelist_free[i] ) begin
-        freelist_has_free   = 1'b1;
-        freelist_alloc_preg = i[p_preg_addr_nbits-1:0];
+      if ( !freelist_has_free_lane0 && freelist_free[i] ) begin
+        freelist_has_free_lane0   = 1'b1;
+        freelist_alloc_preg_lane0 = i[p_preg_addr_nbits-1:0];
+      end
+      else if ( freelist_has_free_lane0
+             && !freelist_has_free_lane1
+             && freelist_free[i] ) begin
+        freelist_has_free_lane1   = 1'b1;
+        freelist_alloc_preg_lane1 = i[p_preg_addr_nbits-1:0];
       end
     end
   end
 
-  assign rd_paddr_new_D = freelist_alloc_preg;
+  assign rd_paddr_new_D_lane0 = freelist_alloc_preg_lane0;
+  assign rd_paddr_new_D_lane1 = rd_rename_valid_D_lane0
+                              ? freelist_alloc_preg_lane1
+                              : freelist_alloc_preg_lane0;
+
+  assign rename_num_needed = { 1'b0, rd_rename_valid_D_lane0 }
+                           + { 1'b0, rd_rename_valid_D_lane1 };
+
+  assign rename_rdy_D = ( rename_num_needed == 2'd0 )
+                     || ( ( rename_num_needed == 2'd1 ) && freelist_has_free_lane0 )
+                     || ( ( rename_num_needed == 2'd2 ) && freelist_has_free_lane0
+                                                         && freelist_has_free_lane1 );
 
   // --------------------------------------------------
   // Sequential state update
@@ -152,11 +213,15 @@ module proj3_ProcRenameUnit #(
       // D-stage rename update
       // Only update state when rename_en_D is asserted.
       // ----------------------------------------------
-      if ( rename_en_D && rd_rename_valid_D ) begin
-        // Assume there is always a free physical reg when rename is enabled
-        if ( freelist_has_free ) begin
-          rat[rd_addr_D] <= rd_paddr_new_D;
-          freelist_free[rd_paddr_new_D] <= 1'b0;
+      if ( rename_en_D && rename_rdy_D ) begin
+        if ( rd_rename_valid_D_lane0 ) begin
+          rat[rd_addr_D_lane0] <= rd_paddr_new_D_lane0;
+          freelist_free[rd_paddr_new_D_lane0] <= 1'b0;
+        end
+
+        if ( rd_rename_valid_D_lane1 ) begin
+          rat[rd_addr_D_lane1] <= rd_paddr_new_D_lane1;
+          freelist_free[rd_paddr_new_D_lane1] <= 1'b0;
         end
       end
 
@@ -165,8 +230,6 @@ module proj3_ProcRenameUnit #(
       freelist_free[0]  <= 1'b0;
     end
   end
-
-assign rename_rdy_D = !rd_rename_valid_D || freelist_has_free;
 
 endmodule
 

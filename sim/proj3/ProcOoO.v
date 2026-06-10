@@ -36,11 +36,11 @@ module proj3_ProcOoO
   input  logic         xcel_respstream_val,
   output logic         xcel_respstream_rdy,
 
-  output mem_req_4B_t  imem_reqstream_msg,
+  output mem_req_8B_t  imem_reqstream_msg,
   output logic         imem_reqstream_val,
   input  logic         imem_reqstream_rdy,
 
-  input  mem_resp_4B_t imem_respstream_msg,
+  input  mem_resp_8B_t imem_respstream_msg,
   input  logic         imem_respstream_val,
   output logic         imem_respstream_rdy,
 
@@ -62,19 +62,20 @@ module proj3_ProcOoO
   //======================================================================
 
   logic [1:0]  imem_queue_num_free_entries;
-  mem_req_4B_t imem_reqstream_enq_msg;
+  mem_req_8B_t imem_reqstream_enq_msg;
   logic        imem_reqstream_enq_val;
   logic        imem_reqstream_enq_rdy;
-  logic [31:0] imem_reqstream_enq_msg_addr;
+  logic [31:0] imem_req_addr_lane0;
+  logic [31:0] imem_req_addr_lane1;
 
   assign imem_reqstream_enq_msg.type_  = `VC_MEM_REQ_MSG_TYPE_READ;
   assign imem_reqstream_enq_msg.opaque = 8'b0;
-  assign imem_reqstream_enq_msg.addr   = imem_reqstream_enq_msg_addr;
-  assign imem_reqstream_enq_msg.len    = 2'd0;
-  assign imem_reqstream_enq_msg.data   = 32'd0;
+  assign imem_reqstream_enq_msg.addr   = imem_req_addr_lane0;
+  assign imem_reqstream_enq_msg.len    = 3'd0;
+  assign imem_reqstream_enq_msg.data   = 64'd0;
 
-  mem_req_4B_t imem_reqstream_msg_4state_fix;
-  vc_Queue#(`VC_QUEUE_BYPASS,$bits(mem_req_4B_t),2) imem_queue
+  mem_req_8B_t imem_reqstream_msg_4state_fix;
+  vc_Queue#(`VC_QUEUE_BYPASS,$bits(mem_req_8B_t),2) imem_queue
   (
     .clk              (clk),
     .reset            (reset),
@@ -90,18 +91,20 @@ module proj3_ProcOoO
   );
   
   assign imem_reqstream_msg
-    = imem_reqstream_msg_4state_fix & {$bits(mem_req_4B_t){imem_reqstream_val}};
+    = imem_reqstream_msg_4state_fix & {$bits(mem_req_8B_t){imem_reqstream_val}};
 
   //======================================================================
   // Imem Drop Unit
   //======================================================================
 
   logic         imem_respstream_drop;
-  mem_resp_4B_t imem_respstream_drop_msg;
+  mem_resp_8B_t imem_respstream_drop_msg;
   logic         imem_respstream_drop_val;
   logic         imem_respstream_drop_rdy;
+  logic [31:0]  imem_resp_inst_lane0;
+  logic [31:0]  imem_resp_inst_lane1;
   
-  proj3_DropUnit #($bits(mem_resp_4B_t)) imem_respstream_drop_unit
+  proj3_DropUnit #($bits(mem_resp_8B_t)) imem_respstream_drop_unit
   (
     .clk         (clk),
     .reset       (reset),
@@ -116,6 +119,9 @@ module proj3_ProcOoO
     .ostream_val (imem_respstream_drop_val),
     .ostream_rdy (imem_respstream_drop_rdy)
   );
+
+  assign imem_resp_inst_lane0 = imem_respstream_drop_msg.data[31:0];
+  assign imem_resp_inst_lane1 = imem_respstream_drop_msg.data[63:32];
   
   //======================================================================
   // Data Memory Request Bypass Queue
@@ -232,11 +238,11 @@ module proj3_ProcOoO
   logic [2:0]  imm_type_I;
   logic [1:0]  op2_sel_I;
   logic [1:0]  csrr_sel_I;
-  logic        imul_istream_val_I;
-  logic        is_mem_I;
+  logic        alu_issue_fire_I;
+  logic        mul_issue_fire_I;
+  logic        mem_issue_fire_I;
   logic        is_sw_I;
 
-  logic        reg_en_X;
   logic [3:0]  alu_fn_X;
 
   logic        imul_ostream_rdy_W;
@@ -253,12 +259,14 @@ module proj3_ProcOoO
   logic        stats_en_wen_W;
   
   // dpath -> ctrl
-  logic [31:0] inst_D;
+  logic [31:0] inst_D_lane0;
+  logic [31:0] inst_D_lane1;
   logic        iq_input_rdy_D;
   logic        iq_dispatch_val;
   logic [31:0] iq_dispatch_inst;
   
   // ROB / Rename status feedback
+  logic        rob_alloc_rdy_D;
   logic        rob_full_D;
   logic        rename_rdy_D;
 
@@ -320,11 +328,11 @@ module proj3_ProcOoO
     .imm_type_I              (imm_type_I),
     .op2_sel_I               (op2_sel_I),
     .csrr_sel_I              (csrr_sel_I),
-    .imul_istream_val_I      (imul_istream_val_I),
-    .is_mem_I                (is_mem_I),
+    .alu_issue_fire_I        (alu_issue_fire_I),
+    .mul_issue_fire_I        (mul_issue_fire_I),
+    .mem_issue_fire_I        (mem_issue_fire_I),
     .is_sw_I                 (is_sw_I),
 
-    .reg_en_X                (reg_en_X),
     .alu_fn_X                (alu_fn_X),
 
     .rf_waddr_W              (rf_waddr_W),
@@ -338,8 +346,10 @@ module proj3_ProcOoO
     .stats_en_wen_W          (stats_en_wen_W),
 
     // dpath -> ctrl
-    .inst_D                  (inst_D),
+    .inst_D_lane0            (inst_D_lane0),
+    .inst_D_lane1            (inst_D_lane1),
     .iq_input_rdy_D          (iq_input_rdy_D),
+    .rob_alloc_rdy_D         (rob_alloc_rdy_D),
     .rob_full_D              (rob_full_D),
     .rename_rdy_D            (rename_rdy_D),
 
@@ -367,8 +377,10 @@ module proj3_ProcOoO
     .reset                    (reset),
 
     // Instruction Memory Port
-    .imem_reqstream_msg_addr  (imem_reqstream_enq_msg_addr),
-    .imem_respstream_msg      (imem_respstream_drop_msg),
+    .imem_req_addr_lane0     (imem_req_addr_lane0),
+    .imem_req_addr_lane1     (imem_req_addr_lane1),
+    .imem_resp_inst_lane0    (imem_resp_inst_lane0),
+    .imem_resp_inst_lane1    (imem_resp_inst_lane1),
 
     // Data Memory Port
     .dmem_reqstream_val       (dmem_reqstream_enq_val),
@@ -400,11 +412,11 @@ module proj3_ProcOoO
     .imm_type_I               (imm_type_I),
     .op2_sel_I                (op2_sel_I),
     .csrr_sel_I               (csrr_sel_I),
-    .imul_istream_val_I       (imul_istream_val_I),
-    .is_mem_I                 (is_mem_I),
+    .alu_issue_fire_I         (alu_issue_fire_I),
+    .mul_issue_fire_I         (mul_issue_fire_I),
+    .mem_issue_fire_I         (mem_issue_fire_I),
     .is_sw_I                  (is_sw_I),
 
-    .reg_en_X                 (reg_en_X),
     .alu_fn_X                 (alu_fn_X),
 
     .rf_waddr_W               (rf_waddr_W),
@@ -418,11 +430,13 @@ module proj3_ProcOoO
     .stats_en_wen_W           (stats_en_wen_W),
 
     // dpath -> ctrl
-    .inst_D                   (inst_D),
+    .inst_D_lane0             (inst_D_lane0),
+    .inst_D_lane1             (inst_D_lane1),
     .iq_input_rdy_D           (iq_input_rdy_D),
     .iq_dispatch_val          (iq_dispatch_val),
     .iq_dispatch_inst         (iq_dispatch_inst),
 
+    .rob_alloc_rdy_D          (rob_alloc_rdy_D),
     .rob_full_D               (rob_full_D),
     .rename_rdy_D             (rename_rdy_D),
     .commit_val_C             (commit_val_C),
@@ -466,15 +480,19 @@ module proj3_ProcOoO
       // 2. D stage (Decode / Rename / Allocate)
 
       if ( !ctrl.val_D )
-        vc_trace.append_chars( trace_str, " ", 25 );
+        vc_trace.append_chars( trace_str, " ", 51 );
       else if ( ctrl.stall_D ) begin
         vc_trace.append_str( trace_str, "#" );
-        vc_trace.append_chars( trace_str, " ", 24 );
+        vc_trace.append_chars( trace_str, " ", 50 );
       end
       else begin
-        $sformat( str, "%0d:", dpath.alloc_tag_D );
+        $sformat( str, "%0d:", dpath.alloc_tag_D_lane0 );
         vc_trace.append_str( trace_str, str );
-        vc_trace.append_str( trace_str, {3896'b0, tinyrv2.disasm( inst_D )} );
+        vc_trace.append_str( trace_str, {3896'b0, tinyrv2.disasm( inst_D_lane0 )} );
+        vc_trace.append_str( trace_str, "," );
+        $sformat( str, "%0d:", dpath.alloc_tag_D_lane1 );
+        vc_trace.append_str( trace_str, str );
+        vc_trace.append_str( trace_str, {3896'b0, tinyrv2.disasm( inst_D_lane1 )} );
       end
         
       vc_trace.append_str( trace_str, "|" );
@@ -533,24 +551,6 @@ module proj3_ProcOoO
 
     end
     `VC_TRACE_END
-
-    vc_MemReqMsg4BTrace imem_reqstream_trace
-    (
-      .clk   (clk),
-      .reset (reset),
-      .val   (imem_reqstream_val),
-      .rdy   (imem_reqstream_rdy),
-      .msg   (imem_reqstream_msg)
-    );
-
-    vc_MemRespMsg4BTrace imem_respstream_trace
-    (
-      .clk   (clk),
-      .reset (reset),
-      .val   (imem_respstream_val),
-      .rdy   (imem_respstream_rdy),
-      .msg   (imem_respstream_msg)
-    );
 
     vc_MemReqMsg4BTrace dmem_reqstream_trace
     (

@@ -59,7 +59,14 @@ class TestHarness(Component):
     s.sink = StreamSinkFL( Bits32, [] )
     s.proc = ProcType()
     s.xcel = NullXcelFL()
-    s.mem  = MemoryFL(2, mem_ifc_dtypes=2*[mk_mem_msg(8,32,32)] )
+
+    if ProcType.__name__ == "ProcOoO":
+      s.mem = MemoryFL(2, mem_ifc_dtypes=[
+        mk_mem_msg(8,32,64),
+        mk_mem_msg(8,32,32),
+      ] )
+    else:
+      s.mem = MemoryFL(2, mem_ifc_dtypes=2*[mk_mem_msg(8,32,32)] )
 
     s.proc.commit_inst //= s.commit_inst
 

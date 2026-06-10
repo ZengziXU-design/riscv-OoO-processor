@@ -41,11 +41,11 @@ module proj3_ProcCtrl
   output logic [2:0]  imm_type_I,
   output logic [1:0]  op2_sel_I,
   output logic [1:0]  csrr_sel_I,
-  output logic        imul_istream_val_I,
-  output logic        is_mem_I,
+  output logic        alu_issue_fire_I,
+  output logic        mul_issue_fire_I,
+  output logic        mem_issue_fire_I,
   output logic        is_sw_I,
 
-  output logic        reg_en_X,
   output logic [3:0]  alu_fn_X,
 
   output logic [4:0]  rf_waddr_W,
@@ -59,8 +59,10 @@ module proj3_ProcCtrl
   output logic        imul_ostream_rdy_W,
   output logic        stats_en_wen_W,
 
-  input  logic [31:0] inst_D,
+  input  logic [31:0] inst_D_lane0,
+  input  logic [31:0] inst_D_lane1,
   input  logic        iq_input_rdy_D,
+  input  logic        rob_alloc_rdy_D,
   input  logic        rob_full_D,
   input  logic        rename_rdy_D,
 
@@ -110,7 +112,6 @@ module proj3_ProcCtrl
   logic next_val_F;
 
   logic iq_dispatch_fire;
-  logic x_issue_fire;
   logic issue_stall_Q;
 
   assign imem_respstream_drop = 1'b0;
@@ -153,12 +154,12 @@ module proj3_ProcCtrl
 
   logic d_rdy;
 
-  assign d_rdy    = iq_input_rdy_D && !rob_full_D && rename_rdy_D;
+  assign d_rdy    = iq_input_rdy_D && rob_alloc_rdy_D && rename_rdy_D;
   assign stall_D  = val_D && !d_rdy;
   assign reg_en_D = !stall_D;
 
-  assign iq_input_val_D  = val_D && !rob_full_D && rename_rdy_D;
-  assign rob_alloc_req_D = val_D && !rob_full_D && iq_input_rdy_D && rename_rdy_D;
+  assign iq_input_val_D  = val_D && rob_alloc_rdy_D && rename_rdy_D;
+  assign rob_alloc_req_D = val_D && rob_alloc_rdy_D && iq_input_rdy_D && rename_rdy_D;
 
   always_ff @(posedge clk) begin
     if ( reset )
@@ -334,13 +335,12 @@ module proj3_ProcCtrl
   assign imm_type_I         = dec_imm_type_Q;
   assign op2_sel_I          = dec_op2_sel_Q;
   assign csrr_sel_I         = csrr_sel_final_Q;
-  assign imul_istream_val_I = iq_dispatch_fire && dec_mul_Q;
-  assign is_mem_I           = dec_load_Q || dec_store_Q;
+  assign alu_issue_fire_I   = iq_dispatch_fire && !dec_mul_Q && !( dec_load_Q || dec_store_Q );
+  assign mul_issue_fire_I   = iq_dispatch_fire && dec_mul_Q;
+  assign mem_issue_fire_I   = iq_dispatch_fire && ( dec_load_Q || dec_store_Q );
   assign is_sw_I            = dec_store_Q;
 
   assign mngr2proc_rdy      = iq_dispatch_fire && csrr_mngr2proc_Q;
-
-  assign x_issue_fire       = iq_dispatch_fire && !dec_mul_Q && !( dec_load_Q || dec_store_Q );
 
   //----------------------------------------------------------------------
   // X stage control pipeline
@@ -352,7 +352,9 @@ module proj3_ProcCtrl
   logic       proc2mngr_X_r;
   logic       stats_en_wen_X_r;
 
-  assign reg_en_X = !stall_W;
+  logic       x_pipe_en;
+
+  assign x_pipe_en = !stall_W;
 
   always_ff @(posedge clk) begin
     if ( reset ) begin
@@ -363,8 +365,8 @@ module proj3_ProcCtrl
       proc2mngr_X_r    <= 1'b0;
       stats_en_wen_X_r <= 1'b0;
     end
-    else if ( reg_en_X ) begin
-      val_X            <= x_issue_fire;
+    else if ( x_pipe_en ) begin
+      val_X            <= alu_issue_fire_I;
       rf_wen_X_r       <= dec_rf_wen_Q;
       rf_waddr_X_r     <= inst_rd_Q;
       alu_fn_X_r       <= dec_alu_fn_Q;
@@ -381,8 +383,6 @@ module proj3_ProcCtrl
 
   logic take_x_now;
   logic take_mul_now;
-  logic issue_mul_fire;
-
   logic       mul_valid_Y0,  mul_valid_Y1,  mul_valid_Y2,  mul_valid_Y3;
   logic [4:0] mul_rd_Y0,     mul_rd_Y1,     mul_rd_Y2,     mul_rd_Y3;
   logic       mul_rf_wen_Y0, mul_rf_wen_Y1, mul_rf_wen_Y2, mul_rf_wen_Y3;
@@ -414,8 +414,6 @@ module proj3_ProcCtrl
   // MUL bookkeeping
   //----------------------------------------------------------------------
 
-  assign issue_mul_fire = iq_dispatch_fire && dec_mul_Q;
-
   always_ff @(posedge clk) begin
     if ( reset ) begin
       mul_valid_Y0    <= 1'b0;
@@ -434,9 +432,9 @@ module proj3_ProcCtrl
       mul_rf_wen_Y3   <= 1'b0;
     end
     else if ( mul_pipe_en ) begin
-      mul_valid_Y0    <= issue_mul_fire;
-      mul_rd_Y0       <= issue_mul_fire ? inst_rd_Q : 5'd0;
-      mul_rf_wen_Y0   <= issue_mul_fire && dec_rf_wen_Q;
+      mul_valid_Y0    <= mul_issue_fire_I;
+      mul_rd_Y0       <= mul_issue_fire_I ? inst_rd_Q : 5'd0;
+      mul_rf_wen_Y0   <= mul_issue_fire_I && dec_rf_wen_Q;
 
       mul_valid_Y1    <= mul_valid_Y0;
       mul_valid_Y2    <= mul_valid_Y1;

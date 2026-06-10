@@ -6,25 +6,38 @@ from pymtl3 import *
 from pymtl3.passes.backends.verilog import *
 
 class ProcIssueQueue( VerilogPlaceholder, Component ):
-  def construct( s, p_num_entries=4, p_prf_addr_nbits=6, p_rob_tag_nbits=3 ):
+  def construct( s, p_num_entries=8, p_prf_addr_nbits=6, p_rob_tag_nbits=3 ):
 
     # --------------------------------------------------------------------
     # Upstream interface (From D stage)
     # --------------------------------------------------------------------
-    s.input_val         = InPort ( 1 )
+    s.input_val_lane0   = InPort ( 1 )
+    s.input_val_lane1   = InPort ( 1 )
     s.input_rdy         = OutPort( 1 )
 
-    s.input_inst        = InPort ( 32 )
-    s.input_rob_tag     = InPort ( p_rob_tag_nbits )
-    s.input_is_csr      = InPort ( 1 )
-    s.input_is_mem      = InPort ( 1 )   # NEW: lw/sw classification from PreDecode
+    s.input_inst_lane0    = InPort ( 32 )
+    s.input_rob_tag_lane0 = InPort ( p_rob_tag_nbits )
+    s.input_is_csr_lane0  = InPort ( 1 )
+    s.input_is_mem_lane0  = InPort ( 1 )
 
-    s.input_rs1_addr    = InPort ( p_prf_addr_nbits )
-    s.input_rs1_valid   = InPort ( 1 )
-    s.input_rs2_addr    = InPort ( p_prf_addr_nbits )
-    s.input_rs2_valid   = InPort ( 1 )
-    s.input_rd_addr     = InPort ( p_prf_addr_nbits )
-    s.input_rd_valid    = InPort ( 1 )
+    s.input_inst_lane1    = InPort ( 32 )
+    s.input_rob_tag_lane1 = InPort ( p_rob_tag_nbits )
+    s.input_is_csr_lane1  = InPort ( 1 )
+    s.input_is_mem_lane1  = InPort ( 1 )
+
+    s.input_rs1_addr_lane0  = InPort ( p_prf_addr_nbits )
+    s.input_rs1_valid_lane0 = InPort ( 1 )
+    s.input_rs2_addr_lane0  = InPort ( p_prf_addr_nbits )
+    s.input_rs2_valid_lane0 = InPort ( 1 )
+    s.input_rd_addr_lane0   = InPort ( p_prf_addr_nbits )
+    s.input_rd_valid_lane0  = InPort ( 1 )
+
+    s.input_rs1_addr_lane1  = InPort ( p_prf_addr_nbits )
+    s.input_rs1_valid_lane1 = InPort ( 1 )
+    s.input_rs2_addr_lane1  = InPort ( p_prf_addr_nbits )
+    s.input_rs2_valid_lane1 = InPort ( 1 )
+    s.input_rd_addr_lane1   = InPort ( p_prf_addr_nbits )
+    s.input_rd_valid_lane1  = InPort ( 1 )
 
     # --------------------------------------------------------------------
     # Downstream interface (To Execution / Issue stage)

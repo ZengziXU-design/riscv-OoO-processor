@@ -13,7 +13,8 @@ from pymtl3.stdlib.xcel        import mk_xcel_msg
 class ProcOoO( VerilogPlaceholder, Component ):
   def construct( s ):
 
-    MemReqMsg,  MemRespMsg  = mk_mem_msg( 8, 32, 32 )
+    IMemReqMsg, IMemRespMsg = mk_mem_msg( 8, 32, 64 )
+    DMemReqMsg, DMemRespMsg = mk_mem_msg( 8, 32, 32 )
     XcelReqMsg, XcelRespMsg = mk_xcel_msg( 5, 32 )
 
     s.mngr2proc   = IStreamIfc( Bits32 )
@@ -21,10 +22,9 @@ class ProcOoO( VerilogPlaceholder, Component ):
 
     s.xcel        = XcelRequesterIfc( XcelReqMsg, XcelRespMsg )
 
-    s.imem        = MemRequesterIfc( MemReqMsg, MemRespMsg )
-    s.dmem        = MemRequesterIfc( MemReqMsg, MemRespMsg )
+    s.imem        = MemRequesterIfc( IMemReqMsg, IMemRespMsg )
+    s.dmem        = MemRequesterIfc( DMemReqMsg, DMemRespMsg )
 
     s.core_id     = InPort(32)
     s.commit_inst = OutPort()
     s.stats_en    = OutPort()
-

@@ -10,7 +10,7 @@
 `define PROC_PROC_IQ_V
 
 module proj3_ProcIssueQueue #(
-  parameter p_num_entries    = 4,
+  parameter p_num_entries    = 8,
   parameter p_prf_addr_nbits = 6,
   parameter p_rob_tag_nbits  = 3
 )(
@@ -20,22 +20,35 @@ module proj3_ProcIssueQueue #(
   //----------------------------------------------------------------------
   // Upstream interface 
   //----------------------------------------------------------------------
-  input  logic        input_val,
+  input  logic        input_val_lane0,
+  input  logic        input_val_lane1,
   output logic        input_rdy,
   
-  // store 
-  input  logic [31:0]                  input_inst,    
-  input  logic [p_rob_tag_nbits-1:0]   input_rob_tag, 
-  input  logic                         input_is_csr,
-  input  logic                         input_is_mem,  
+  // Store original instruction and simple predecode bits
+  input  logic [31:0]                  input_inst_lane0,
+  input  logic [p_rob_tag_nbits-1:0]   input_rob_tag_lane0,
+  input  logic                         input_is_csr_lane0,
+  input  logic                         input_is_mem_lane0,
+
+  input  logic [31:0]                  input_inst_lane1,
+  input  logic [p_rob_tag_nbits-1:0]   input_rob_tag_lane1,
+  input  logic                         input_is_csr_lane1,
+  input  logic                         input_is_mem_lane1,
 
   // pr1/pr2/prd address & valid (come from renameunit)
-  input  logic [p_prf_addr_nbits-1:0]  input_rs1_addr,
-  input  logic                         input_rs1_valid,
-  input  logic [p_prf_addr_nbits-1:0]  input_rs2_addr,
-  input  logic                         input_rs2_valid,
-  input  logic [p_prf_addr_nbits-1:0]  input_rd_addr,
-  input  logic                         input_rd_valid,
+  input  logic [p_prf_addr_nbits-1:0]  input_rs1_addr_lane0,
+  input  logic                         input_rs1_valid_lane0,
+  input  logic [p_prf_addr_nbits-1:0]  input_rs2_addr_lane0,
+  input  logic                         input_rs2_valid_lane0,
+  input  logic [p_prf_addr_nbits-1:0]  input_rd_addr_lane0,
+  input  logic                         input_rd_valid_lane0,
+
+  input  logic [p_prf_addr_nbits-1:0]  input_rs1_addr_lane1,
+  input  logic                         input_rs1_valid_lane1,
+  input  logic [p_prf_addr_nbits-1:0]  input_rs2_addr_lane1,
+  input  logic                         input_rs2_valid_lane1,
+  input  logic [p_prf_addr_nbits-1:0]  input_rd_addr_lane1,
+  input  logic                         input_rd_valid_lane1,
 
   //----------------------------------------------------------------------
   // Downstream interface 
@@ -113,10 +126,13 @@ module proj3_ProcIssueQueue #(
   // Internal control wires
   //----------------------------------------------------------------------
   logic [c_cnt_nbits-1:0] num_valid_entries;
+  logic [c_cnt_nbits-1:0] num_free_entries;
+  logic [1:0]             input_count;
   logic                   issue_found;
   logic [c_idx_nbits-1:0] issue_idx;
   logic                   entry_ready [0:p_num_entries-1];
-  logic                   input_fire;
+  logic                   input_fire_lane0;
+  logic                   input_fire_lane1;
   logic                   issue_fire;
 
   //----------------------------------------------------------------------
@@ -251,8 +267,13 @@ module proj3_ProcIssueQueue #(
   // Fire signals
   //----------------------------------------------------------------------
   assign issue_fire = dispatch_val && dispatch_rdy;
-  assign input_rdy  = ( num_valid_entries < p_num_entries ) || issue_fire;
-  assign input_fire = input_val && input_rdy;
+  assign input_count = { 1'b0, input_val_lane0 }
+                     + { 1'b0, input_val_lane1 };
+  assign num_free_entries = p_num_entries - num_valid_entries
+                          + { {(c_cnt_nbits-1){1'b0}}, issue_fire };
+  assign input_rdy  = ( input_count <= num_free_entries );
+  assign input_fire_lane0 = input_val_lane0 && input_rdy;
+  assign input_fire_lane1 = input_val_lane1 && input_rdy;
 
   //----------------------------------------------------------------------
   // Next-state logic 
@@ -292,18 +313,33 @@ module proj3_ProcIssueQueue #(
       end
     end
 
-    if ( input_fire && ( w < p_num_entries ) ) begin
+    if ( input_fire_lane0 && ( w < p_num_entries ) ) begin
       IQ_valid_next[w]     = 1'b1;
-      IQ_insts_next[w]     = input_inst;
-      IQ_rob_tag_next[w]   = input_rob_tag;
-      IQ_is_csr_next[w]    = input_is_csr;
-      IQ_is_mem_next[w]    = input_is_mem;
-      IQ_rs1_addr_next[w]  = input_rs1_addr;
-      IQ_rs1_valid_next[w] = input_rs1_valid;
-      IQ_rs2_addr_next[w]  = input_rs2_addr;
-      IQ_rs2_valid_next[w] = input_rs2_valid;
-      IQ_rd_addr_next[w]   = input_rd_addr;
-      IQ_rd_valid_next[w]  = input_rd_valid;
+      IQ_insts_next[w]     = input_inst_lane0;
+      IQ_rob_tag_next[w]   = input_rob_tag_lane0;
+      IQ_is_csr_next[w]    = input_is_csr_lane0;
+      IQ_is_mem_next[w]    = input_is_mem_lane0;
+      IQ_rs1_addr_next[w]  = input_rs1_addr_lane0;
+      IQ_rs1_valid_next[w] = input_rs1_valid_lane0;
+      IQ_rs2_addr_next[w]  = input_rs2_addr_lane0;
+      IQ_rs2_valid_next[w] = input_rs2_valid_lane0;
+      IQ_rd_addr_next[w]   = input_rd_addr_lane0;
+      IQ_rd_valid_next[w]  = input_rd_valid_lane0;
+      w = w + 1;
+    end
+
+    if ( input_fire_lane1 && ( w < p_num_entries ) ) begin
+      IQ_valid_next[w]     = 1'b1;
+      IQ_insts_next[w]     = input_inst_lane1;
+      IQ_rob_tag_next[w]   = input_rob_tag_lane1;
+      IQ_is_csr_next[w]    = input_is_csr_lane1;
+      IQ_is_mem_next[w]    = input_is_mem_lane1;
+      IQ_rs1_addr_next[w]  = input_rs1_addr_lane1;
+      IQ_rs1_valid_next[w] = input_rs1_valid_lane1;
+      IQ_rs2_addr_next[w]  = input_rs2_addr_lane1;
+      IQ_rs2_valid_next[w] = input_rs2_valid_lane1;
+      IQ_rd_addr_next[w]   = input_rd_addr_lane1;
+      IQ_rd_valid_next[w]  = input_rd_valid_lane1;
     end
 
     // Scoreboard 
@@ -316,8 +352,11 @@ module proj3_ProcIssueQueue #(
     if ( rf_wen2 && ( rf_waddr2 != '0 ) )
       scoreboard_busy_next[rf_waddr2] = 1'b0;
 
-    if ( input_fire && input_rd_valid && ( input_rd_addr != '0 ) )
-      scoreboard_busy_next[input_rd_addr] = 1'b1;
+    if ( input_fire_lane0 && input_rd_valid_lane0 && ( input_rd_addr_lane0 != '0 ) )
+      scoreboard_busy_next[input_rd_addr_lane0] = 1'b1;
+
+    if ( input_fire_lane1 && input_rd_valid_lane1 && ( input_rd_addr_lane1 != '0 ) )
+      scoreboard_busy_next[input_rd_addr_lane1] = 1'b1;
 
     scoreboard_busy_next[0] = 1'b0;
   end
