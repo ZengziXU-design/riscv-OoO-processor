@@ -2,12 +2,13 @@
 `define PROC_PROC_PREGFILE_V
 
 // ============================================================================
-// Physical register file with 2 read ports and 3 write ports.
-//   * Read  port 0  : rs1 read for issue
-//   * Read  port 1  : rs2 read for issue
-//   * Write port 0  : ALU / CSR result writeback (X stage)
-//   * Write port 1  : MUL result writeback     (Y3 stage)
-//   * Write port 2  : LW response writeback    (M stage)  [NEW]
+// Physical register file with 4 read ports and 4 write ports.
+//   * Read  ports issue0_rs1/issue0_rs2 : first issued instruction
+//   * Read  ports issue1_rs1/issue1_rs2 : second issued instruction
+//   * Write port alu0 : ALU0 / CSR result writeback
+//   * Write port alu1 : ALU1 result writeback
+//   * Write port mul  : MUL result writeback
+//   * Write port mem  : LW response writeback
 // p0 is hardwired to zero on every cycle and write masks ensure no port
 // can corrupt it.
 // ============================================================================
@@ -18,37 +19,50 @@ module proj3_ProcPregfile
   input  logic        reset,
 
   // --------------------------------------------------
-  // Read port 0 (for issue rs1_paddr)
+  // Read ports for issue slot 0
   // --------------------------------------------------
-  input  logic  [5:0] rd_addr0,
-  output logic [31:0] rd_data0,
+  input  logic  [5:0] rd_addr_issue0_rs1,
+  output logic [31:0] rd_data_issue0_rs1,
+
+  input  logic  [5:0] rd_addr_issue0_rs2,
+  output logic [31:0] rd_data_issue0_rs2,
 
   // --------------------------------------------------
-  // Read port 1 (for issue rs2_paddr)
+  // Read ports for issue slot 1
   // --------------------------------------------------
-  input  logic  [5:0] rd_addr1,
-  output logic [31:0] rd_data1,
+  input  logic  [5:0] rd_addr_issue1_rs1,
+  output logic [31:0] rd_data_issue1_rs1,
+
+  input  logic  [5:0] rd_addr_issue1_rs2,
+  output logic [31:0] rd_data_issue1_rs2,
 
   // --------------------------------------------------
-  // Write port 0 (for ALU/CSR results)
+  // Write port for ALU0/CSR results
   // --------------------------------------------------
-  input  logic        wr_en0,
-  input  logic  [5:0] wr_addr0,
-  input  logic [31:0] wr_data0,
+  input  logic        wr_en_alu0,
+  input  logic  [5:0] wr_addr_alu0,
+  input  logic [31:0] wr_data_alu0,
 
   // --------------------------------------------------
-  // Write port 1 (for MUL results)
+  // Write port for ALU1 results
   // --------------------------------------------------
-  input  logic        wr_en1,
-  input  logic  [5:0] wr_addr1,
-  input  logic [31:0] wr_data1,
+  input  logic        wr_en_alu1,
+  input  logic  [5:0] wr_addr_alu1,
+  input  logic [31:0] wr_data_alu1,
 
   // --------------------------------------------------
-  // Write port 2 (for LW response data) 
+  // Write port for MUL results
   // --------------------------------------------------
-  input  logic        wr_en2,
-  input  logic  [5:0] wr_addr2,
-  input  logic [31:0] wr_data2
+  input  logic        wr_en_mul,
+  input  logic  [5:0] wr_addr_mul,
+  input  logic [31:0] wr_data_mul,
+
+  // --------------------------------------------------
+  // Write port for memory response data
+  // --------------------------------------------------
+  input  logic        wr_en_mem,
+  input  logic  [5:0] wr_addr_mem,
+  input  logic [31:0] wr_data_mem
 );
 
   // 64-entry physical register file
@@ -57,40 +71,48 @@ module proj3_ProcPregfile
 
   // Mask writes to p0 so that p0 is always zero
 
-  logic wr_en0_real;
-  logic wr_en1_real;
-  logic wr_en2_real;
+  logic wr_en_alu0_real;
+  logic wr_en_alu1_real;
+  logic wr_en_mul_real;
+  logic wr_en_mem_real;
 
-  assign wr_en0_real = wr_en0 && ( wr_addr0 != 6'd0 );
-  assign wr_en1_real = wr_en1 && ( wr_addr1 != 6'd0 );
-  assign wr_en2_real = wr_en2 && ( wr_addr2 != 6'd0 );
+  assign wr_en_alu0_real = wr_en_alu0 && ( wr_addr_alu0 != 6'd0 );
+  assign wr_en_alu1_real = wr_en_alu1 && ( wr_addr_alu1 != 6'd0 );
+  assign wr_en_mul_real  = wr_en_mul  && ( wr_addr_mul  != 6'd0 );
+  assign wr_en_mem_real  = wr_en_mem  && ( wr_addr_mem  != 6'd0 );
 
   // --------------------------------------------------
   // Combinational reads
-  // Read ports 0/1 include same-cycle write bypass
+  // All read ports include same-cycle write bypass.
   // p0 always reads as zero
-  // Bypass priority: port 0 (X) > port 1 (Y3) > port 2 (M).
+  // Bypass priority: ALU0 > ALU1 > MUL > MEM.
   //
-  // The three write ports target physically distinct destination paddrs
+  // The write ports target physically distinct destination paddrs
   // for any given cycle (the rename + scoreboard guarantee no two
   // instructions write the same paddr in flight), so the priority chain
   // among them only matters for the same-cycle read bypass and is set
-  // arbitrarily here.
+  // to match the functional-unit ordering.
   // --------------------------------------------------
 
-  assign rd_data0 =
-    ( rd_addr0 == 6'd0 )                          ? 32'd0    :
-    ( wr_en0_real && ( wr_addr0 == rd_addr0 ) )   ? wr_data0 :
-    ( wr_en1_real && ( wr_addr1 == rd_addr0 ) )   ? wr_data1 :
-    ( wr_en2_real && ( wr_addr2 == rd_addr0 ) )   ? wr_data2 :
-                                                    rfile[rd_addr0];
+  function automatic logic [31:0] read_with_bypass
+  (
+    input logic [5:0] rd_addr
+  );
+  begin
+    read_with_bypass =
+      ( rd_addr == 6'd0 )                              ? 32'd0        :
+      ( wr_en_alu0_real && ( wr_addr_alu0 == rd_addr ) ) ? wr_data_alu0 :
+      ( wr_en_alu1_real && ( wr_addr_alu1 == rd_addr ) ) ? wr_data_alu1 :
+      ( wr_en_mul_real  && ( wr_addr_mul  == rd_addr ) ) ? wr_data_mul  :
+      ( wr_en_mem_real  && ( wr_addr_mem  == rd_addr ) ) ? wr_data_mem  :
+                                                          rfile[rd_addr];
+  end
+  endfunction
 
-  assign rd_data1 =
-    ( rd_addr1 == 6'd0 )                          ? 32'd0    :
-    ( wr_en0_real && ( wr_addr0 == rd_addr1 ) )   ? wr_data0 :
-    ( wr_en1_real && ( wr_addr1 == rd_addr1 ) )   ? wr_data1 :
-    ( wr_en2_real && ( wr_addr2 == rd_addr1 ) )   ? wr_data2 :
-                                                    rfile[rd_addr1];
+  assign rd_data_issue0_rs1 = read_with_bypass( rd_addr_issue0_rs1 );
+  assign rd_data_issue0_rs2 = read_with_bypass( rd_addr_issue0_rs2 );
+  assign rd_data_issue1_rs1 = read_with_bypass( rd_addr_issue1_rs1 );
+  assign rd_data_issue1_rs2 = read_with_bypass( rd_addr_issue1_rs2 );
 
   // --------------------------------------------------
   // Sequential writes / reset
@@ -103,14 +125,17 @@ module proj3_ProcPregfile
         rfile[i] <= 32'd0;
     end
     else begin
-      if ( wr_en0_real )
-        rfile[wr_addr0] <= wr_data0;
+      if ( wr_en_mem_real )
+        rfile[wr_addr_mem] <= wr_data_mem;
 
-      if ( wr_en1_real )
-        rfile[wr_addr1] <= wr_data1;
+      if ( wr_en_mul_real )
+        rfile[wr_addr_mul] <= wr_data_mul;
 
-      if ( wr_en2_real )
-        rfile[wr_addr2] <= wr_data2;
+      if ( wr_en_alu1_real )
+        rfile[wr_addr_alu1] <= wr_data_alu1;
+
+      if ( wr_en_alu0_real )
+        rfile[wr_addr_alu0] <= wr_data_alu0;
 
       // Keep p0 hardwired to zero
       rfile[0] <= 32'd0;

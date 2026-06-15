@@ -5,15 +5,13 @@
 // ===> [Writeback] Wake up by Tag (pending=0) 
 // ===> [Commit] Verify and commit in order at Head -> Return old PRF to Rename.
 // --------------------------------------------------
-// Stage 1 mem-pipe additions:
-//   * A third writeback completion port (wb2) is added so that lw / sw
-//     can mark their ROB entry pending=0 when the dmem response arrives.
+// Supports two-wide allocate, four completion ports, and single-wide commit.
 // ==================================================
 `ifndef PROC_REORDER_BUFFER_V
 `define PROC_REORDER_BUFFER_V
 
 module proj3_ProcReorderBuffer #(
-  parameter p_num_entries      = 8,
+  parameter p_num_entries      = 16,
   parameter p_preg_addr_nbits  = 6   // 64 physical registers
 )(
   input  logic                   clk,
@@ -38,22 +36,28 @@ module proj3_ProcReorderBuffer #(
   output logic                   rob_full,
 
   //---------------------------------------------------------
-  // Writeback/complete interface 0 (X stage - ALU/CSR)
+  // Writeback/complete interface: ALU0/CSR
   //---------------------------------------------------------
-  input  logic                   wb0_req,              // instruction with wb0_tag is finished
-  input  logic [$clog2(p_num_entries)-1:0] wb0_tag,
+  input  logic                   wb_req_alu0,
+  input  logic [$clog2(p_num_entries)-1:0] wb_tag_alu0,
 
   //---------------------------------------------------------
-  // Writeback/complete interface 1 (Y3 stage - MUL)
+  // Writeback/complete interface: ALU1
   //---------------------------------------------------------
-  input  logic                   wb1_req,              // instruction with wb1_tag is finished
-  input  logic [$clog2(p_num_entries)-1:0] wb1_tag,
+  input  logic                   wb_req_alu1,
+  input  logic [$clog2(p_num_entries)-1:0] wb_tag_alu1,
 
   //---------------------------------------------------------
-  // Writeback/complete interface 2 (M stage - LW/SW)  
+  // Writeback/complete interface: MUL
   //---------------------------------------------------------
-  input  logic                   wb2_req,              // instruction with wb2_tag is finished
-  input  logic [$clog2(p_num_entries)-1:0] wb2_tag,
+  input  logic                   wb_req_mul,
+  input  logic [$clog2(p_num_entries)-1:0] wb_tag_mul,
+
+  //---------------------------------------------------------
+  // Writeback/complete interface: MEM
+  //---------------------------------------------------------
+  input  logic                   wb_req_mem,
+  input  logic [$clog2(p_num_entries)-1:0] wb_tag_mem,
 
   //---------------------------------------------------------
   // Commit interface
@@ -194,16 +198,20 @@ module proj3_ProcReorderBuffer #(
       end
 
       // Completion / writeback tag marks instruction ready
-      if ( wb0_req ) begin
-        pending[wb0_tag] <= 1'b0;
+      if ( wb_req_alu0 ) begin
+        pending[wb_tag_alu0] <= 1'b0;
       end
 
-      if ( wb1_req ) begin
-        pending[wb1_tag] <= 1'b0;
+      if ( wb_req_alu1 ) begin
+        pending[wb_tag_alu1] <= 1'b0;
       end
 
-      if ( wb2_req ) begin
-        pending[wb2_tag] <= 1'b0;
+      if ( wb_req_mul ) begin
+        pending[wb_tag_mul] <= 1'b0;
+      end
+
+      if ( wb_req_mem ) begin
+        pending[wb_tag_mem] <= 1'b0;
       end
     end
   end

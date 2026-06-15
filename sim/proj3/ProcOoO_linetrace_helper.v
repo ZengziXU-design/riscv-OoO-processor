@@ -219,20 +219,20 @@ module proj3_OoO_linetrace_InstTasks();
 // Commit trace
 //------------------------------------------------------------------------
 
-reg [1*8-1:0] c_rob_tag_str;
+reg [2*8-1:0] c_rob_tag_str;
 reg [3*8-1:0] c_old_preg_str;
 reg [3*8-1:0] c_areg_str;
 
-function [20*8-1:0] commit_trace
+function [21*8-1:0] commit_trace
 (
   input logic       has_rd,
-  input logic [2:0] rob_tag,
+  input logic [3:0] rob_tag,
   input logic [4:0] aaddr,
   input logic [5:0] old_paddr
 );
 begin
 
-  // ROB tag, only 0-7
+  // ROB tag, 0-15
   $sformat( c_rob_tag_str, "%0d", rob_tag );
 
   // Old physical destination to free
@@ -248,7 +248,7 @@ begin
     $sformat( c_areg_str, "x%0d",  aaddr );
 
   // Fixed-width commit trace string for Unified PRF
-  // "3: cmt x05, free:p10"
+  // "15: cmt x05, free:p10"
   if ( has_rd && ( aaddr != 0 ) )
     $sformat( commit_trace, "%s: cmt %s, free:%s", c_rob_tag_str, c_areg_str, c_old_preg_str );
   else

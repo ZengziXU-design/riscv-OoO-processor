@@ -44,7 +44,7 @@ class MemUnit( VerilogPlaceholder, Component ):
     s.dmem_respstream_msg_data = InPort ( 32 )
 
     # --------------------------------------------------------------------
-    # ostream  (writeback to PRF write-port-2 + ROB wb2)
+    # ostream  (writeback to PRF mem port + ROB mem complete port)
     # --------------------------------------------------------------------
     s.ostream_val      = OutPort( 1 )
     s.ostream_rdy      = InPort ( 1 )

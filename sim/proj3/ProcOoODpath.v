@@ -110,6 +110,8 @@ module proj3_ProcDpath
   localparam c_reset_vector     = 32'h200;
   localparam c_reset_inst       = 32'h00000000;
   localparam c_preg_addr_nbits  = 6;
+  localparam c_rob_entries      = 16;
+  localparam c_rob_tag_nbits    = $clog2(c_rob_entries);
 
   //--------------------------------------------------------------------
   // F stage
@@ -271,10 +273,10 @@ module proj3_ProcDpath
   // ROB Instantiation (D / W / C stages)
   //--------------------------------------------------------------------
 
-  logic [2:0]  alloc_tag_D_lane0;
-  logic [2:0]  alloc_tag_D_lane1;
-  logic [2:0]  rob_tag_X;
-  logic [2:0]  rob_tag_Y3;
+  logic [c_rob_tag_nbits-1:0] alloc_tag_D_lane0;
+  logic [c_rob_tag_nbits-1:0] alloc_tag_D_lane1;
+  logic [c_rob_tag_nbits-1:0] rob_tag_X;
+  logic [c_rob_tag_nbits-1:0] rob_tag_Y3;
 
   logic        commit_val;
   logic        commit_has_rd;
@@ -292,7 +294,7 @@ module proj3_ProcDpath
   logic        load_ostream_rf_wen;
   logic [31:0] load_ostream_data;
   logic [c_preg_addr_nbits-1:0] load_ostream_rd_paddr;
-  logic [2:0]  load_ostream_rob_idx;
+  logic [c_rob_tag_nbits-1:0] load_ostream_rob_idx;
   logic        load_wb_fire;
   logic        load_prf_wen;
 
@@ -301,7 +303,7 @@ module proj3_ProcDpath
   assign load_prf_wen     = load_wb_fire && load_ostream_rf_wen;
 
   proj3_ProcReorderBuffer #(
-    .p_num_entries     (8),
+    .p_num_entries     (c_rob_entries),
     .p_preg_addr_nbits (c_preg_addr_nbits)
   ) rob
   (
@@ -323,14 +325,17 @@ module proj3_ProcDpath
     .rob_alloc_rdy_D          (rob_alloc_rdy_D),
     .rob_full                 (rob_full_D),
 
-    .wb0_req            (rob_fill_val_W),
-    .wb0_tag            (rob_tag_X),
+    .wb_req_alu0        (rob_fill_val_W),
+    .wb_tag_alu0        (rob_tag_X),
 
-    .wb1_req            (rob_fill_val_Y3),
-    .wb1_tag            (rob_tag_Y3),
+    .wb_req_alu1        (1'b0),
+    .wb_tag_alu1        ('0),
 
-    .wb2_req            (load_wb_fire),
-    .wb2_tag            (load_ostream_rob_idx),
+    .wb_req_mul         (rob_fill_val_Y3),
+    .wb_tag_mul         (rob_tag_Y3),
+
+    .wb_req_mem         (load_wb_fire),
+    .wb_tag_mem         (load_ostream_rob_idx),
 
     .commit_val         (commit_val),
     .commit_has_rd      (commit_has_rd),
@@ -346,7 +351,7 @@ module proj3_ProcDpath
   logic [c_preg_addr_nbits-1:0] iq_dispatch_rs2_addr;
   logic [c_preg_addr_nbits-1:0] iq_dispatch_rd_addr;
   logic                         iq_dispatch_rd_valid;
-  logic [2:0]                   iq_dispatch_rob_tag;
+  logic [c_rob_tag_nbits-1:0]   iq_dispatch_rob_tag;
 
   logic [c_preg_addr_nbits-1:0] rd_paddr_X;
   logic [c_preg_addr_nbits-1:0] rd_paddr_Y3;
@@ -356,7 +361,7 @@ module proj3_ProcDpath
   proj3_ProcIssueQueue #(
     .p_num_entries    (8),
     .p_prf_addr_nbits (c_preg_addr_nbits),
-    .p_rob_tag_nbits  (3)
+    .p_rob_tag_nbits  (c_rob_tag_nbits)
   ) iq
   (
     .clk               (clk),
@@ -439,28 +444,39 @@ module proj3_ProcDpath
 
   logic [31:0] alu_result_X;
   logic [31:0] imul_ostream_msg_W;
+  logic [31:0] prf_rdata_issue1_rs1_I;
+  logic [31:0] prf_rdata_issue1_rs2_I;
 
   proj3_ProcPregfile prf
   (
     .clk      (clk),
     .reset    (reset),
 
-    .rd_addr0 (iq_dispatch_rs1_addr),
-    .rd_data0 (prf_rdata0_I),
-    .rd_addr1 (iq_dispatch_rs2_addr),
-    .rd_data1 (prf_rdata1_I),
+    .rd_addr_issue0_rs1 (iq_dispatch_rs1_addr),
+    .rd_data_issue0_rs1 (prf_rdata0_I),
+    .rd_addr_issue0_rs2 (iq_dispatch_rs2_addr),
+    .rd_data_issue0_rs2 (prf_rdata1_I),
 
-    .wr_en0   (rf_wen_W),
-    .wr_addr0 (rd_paddr_X),
-    .wr_data0 (alu_result_X),
+    .rd_addr_issue1_rs1 (6'd0),
+    .rd_data_issue1_rs1 (prf_rdata_issue1_rs1_I),
+    .rd_addr_issue1_rs2 (6'd0),
+    .rd_data_issue1_rs2 (prf_rdata_issue1_rs2_I),
 
-    .wr_en1   (rf_wen_Y3),
-    .wr_addr1 (rd_paddr_Y3),
-    .wr_data1 (imul_ostream_msg_W),
+    .wr_en_alu0   (rf_wen_W),
+    .wr_addr_alu0 (rd_paddr_X),
+    .wr_data_alu0 (alu_result_X),
 
-    .wr_en2   (load_prf_wen),
-    .wr_addr2 (load_ostream_rd_paddr),
-    .wr_data2 (load_ostream_data)
+    .wr_en_alu1   (1'b0),
+    .wr_addr_alu1 (6'd0),
+    .wr_data_alu1 (32'd0),
+
+    .wr_en_mul   (rf_wen_Y3),
+    .wr_addr_mul (rd_paddr_Y3),
+    .wr_data_mul (imul_ostream_msg_W),
+
+    .wr_en_mem   (load_prf_wen),
+    .wr_addr_mem (load_ostream_rd_paddr),
+    .wr_data_mem (load_ostream_data)
   );
 
   assign op1_issue = prf_rdata0_I;
@@ -508,7 +524,7 @@ module proj3_ProcDpath
     .q     (op2_X)
   );
 
-  vc_EnResetReg #(3, 0) rob_tag_reg_X
+  vc_EnResetReg #(c_rob_tag_nbits, 0) rob_tag_reg_X
   (
     .clk   (clk),
     .reset (reset),
@@ -541,7 +557,7 @@ module proj3_ProcDpath
   // MUL bookkeeping
   //--------------------------------------------------------------------
 
-  logic [2:0] mul_tag_Y0, mul_tag_Y1, mul_tag_Y2, mul_tag_Y3;
+  logic [c_rob_tag_nbits-1:0] mul_tag_Y0, mul_tag_Y1, mul_tag_Y2, mul_tag_Y3;
   logic [c_preg_addr_nbits-1:0] mul_pdst_Y0, mul_pdst_Y1, mul_pdst_Y2, mul_pdst_Y3;
 
   always_ff @(posedge clk) begin
@@ -593,7 +609,7 @@ module proj3_ProcDpath
 
   proj3_MemUnit #(
     .p_paddr_nbits (c_preg_addr_nbits),
-    .p_rob_nbits   (3)
+    .p_rob_nbits   (c_rob_tag_nbits)
   ) mem_unit
   (
     .clk                      (clk),

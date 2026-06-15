@@ -8,34 +8,47 @@ from pymtl3.passes.backends.verilog import *
 class ProcPregfile( VerilogPlaceholder, Component ):
   def construct( s ):
     # --------------------------------------------------
-    # Read port 0
+    # Read ports for issue slot 0
     # --------------------------------------------------
-    s.rd_addr0 = InPort ( 6 )
-    s.rd_data0 = OutPort( 32 )
+    s.rd_addr_issue0_rs1 = InPort ( 6 )
+    s.rd_data_issue0_rs1 = OutPort( 32 )
+
+    s.rd_addr_issue0_rs2 = InPort ( 6 )
+    s.rd_data_issue0_rs2 = OutPort( 32 )
 
     # --------------------------------------------------
-    # Read port 1
+    # Read ports for issue slot 1
     # --------------------------------------------------
-    s.rd_addr1 = InPort ( 6 )
-    s.rd_data1 = OutPort( 32 )
+    s.rd_addr_issue1_rs1 = InPort ( 6 )
+    s.rd_data_issue1_rs1 = OutPort( 32 )
+
+    s.rd_addr_issue1_rs2 = InPort ( 6 )
+    s.rd_data_issue1_rs2 = OutPort( 32 )
 
     # --------------------------------------------------
-    # Write port 0  (ALU / CSR  - X stage)
+    # Write port for ALU0 / CSR
     # --------------------------------------------------
-    s.wr_en0   = InPort ( 1 )
-    s.wr_addr0 = InPort ( 6 )
-    s.wr_data0 = InPort ( 32 )
+    s.wr_en_alu0   = InPort ( 1 )
+    s.wr_addr_alu0 = InPort ( 6 )
+    s.wr_data_alu0 = InPort ( 32 )
 
     # --------------------------------------------------
-    # Write port 1  (MUL  - Y3 stage)
+    # Write port for ALU1
     # --------------------------------------------------
-    s.wr_en1   = InPort ( 1 )
-    s.wr_addr1 = InPort ( 6 )
-    s.wr_data1 = InPort ( 32 )
+    s.wr_en_alu1   = InPort ( 1 )
+    s.wr_addr_alu1 = InPort ( 6 )
+    s.wr_data_alu1 = InPort ( 32 )
 
     # --------------------------------------------------
-    # Write port 2  (LW response from MemUnit  - M stage)
+    # Write port for MUL
     # --------------------------------------------------
-    s.wr_en2   = InPort ( 1 )
-    s.wr_addr2 = InPort ( 6 )
-    s.wr_data2 = InPort ( 32 )
+    s.wr_en_mul   = InPort ( 1 )
+    s.wr_addr_mul = InPort ( 6 )
+    s.wr_data_mul = InPort ( 32 )
+
+    # --------------------------------------------------
+    # Write port for memory response data
+    # --------------------------------------------------
+    s.wr_en_mem   = InPort ( 1 )
+    s.wr_addr_mem = InPort ( 6 )
+    s.wr_data_mem = InPort ( 32 )

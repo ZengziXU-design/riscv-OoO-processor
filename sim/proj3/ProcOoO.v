@@ -537,7 +537,7 @@ module proj3_ProcOoO
 
       if ( commit_inst ) begin
         vc_trace.append_str( trace_str,
-          {3736'b0, ooo_trace.commit_trace(
+          {3728'b0, ooo_trace.commit_trace(
             dpath.commit_has_rd,
             dpath.rob.head,
             dpath.commit_rd_addr,
@@ -546,7 +546,7 @@ module proj3_ProcOoO
         );
       end
       else begin
-        vc_trace.append_chars( trace_str, " ", 20 );
+        vc_trace.append_chars( trace_str, " ", 21 );
       end
 
     end
