@@ -56,30 +56,44 @@ module proj3_ProcDpath
   input  logic         reg_en_F,
   input  logic         reg_en_D,
   input  logic         iq_input_val_D,
-  input  logic         iq_dispatch_rdy,
 
   // D stage control signals for ROB allocation
   input  logic         rob_alloc_req_D,
 
-  // I stage decode controls for dispatch_inst
-  input  logic [2:0]   imm_type_I,
-  input  logic [1:0]   op2_sel_I,
-  input  logic [1:0]   csrr_sel_I,
-  input  logic         alu_issue_fire_I,
+  // Dispatch handshakes
+  input  logic         alu0_dispatch_rdy,
+  input  logic         alu1_dispatch_rdy,
+  input  logic         mul_dispatch_rdy,
+  input  logic         mem_dispatch_rdy,
+
+  // ALU0 issue/decode controls
+  input  logic [2:0]   alu0_imm_type_I,
+  input  logic [1:0]   alu0_op2_sel_I,
+  input  logic [1:0]   alu0_csrr_sel_I,
+  input  logic         alu0_issue_fire_I,
+
+  // ALU1 issue/decode controls
+  input  logic [2:0]   alu1_imm_type_I,
+  input  logic [1:0]   alu1_op2_sel_I,
+  input  logic         alu1_issue_fire_I,
+
+  // MUL/MEM issue controls
   input  logic         mul_issue_fire_I,
   input  logic         mem_issue_fire_I,
-  input  logic         is_sw_I,
+  input  logic [2:0]   mem_imm_type_I,
+  input  logic         mem_is_sw_I,
 
-  // X Stage Control Signals
-  input  logic [3:0]   alu_fn_X,
+  // X stage ALU controls
+  input  logic [3:0]   alu0_fn_X,
+  input  logic [3:0]   alu1_fn_X,
 
   // Writeback-side control signals
-  input  logic [4:0]   rf_waddr_W,
-  input  logic         rf_wen_W,
-  input  logic [4:0]   rf_waddr_Y3,
-  input  logic         rf_wen_Y3,
-  input  logic         rob_fill_val_W,
-  input  logic         rob_fill_val_Y3,
+  input  logic         rf_wen_alu0_W,
+  input  logic         rf_wen_alu1_W,
+  input  logic         rf_wen_mul_Y3,
+  input  logic         rob_fill_val_alu0_W,
+  input  logic         rob_fill_val_alu1_W,
+  input  logic         rob_fill_val_mul_Y3,
 
   input  logic         imul_ostream_rdy_W,
   input  logic         stats_en_wen_W,
@@ -88,6 +102,17 @@ module proj3_ProcDpath
   output logic [31:0]  inst_D_lane0,
   output logic [31:0]  inst_D_lane1,
   output logic         iq_input_rdy_D,
+
+  output logic         alu0_dispatch_val,
+  output logic [31:0]  alu0_dispatch_inst,
+  output logic         alu1_dispatch_val,
+  output logic [31:0]  alu1_dispatch_inst,
+  output logic         mul_dispatch_val,
+  output logic [31:0]  mul_dispatch_inst,
+  output logic         mem_dispatch_val,
+  output logic [31:0]  mem_dispatch_inst,
+
+  // Compatibility/debug view used by the current line trace.
   output logic         iq_dispatch_val,
   output logic [31:0]  iq_dispatch_inst,
 
@@ -164,11 +189,13 @@ module proj3_ProcDpath
   logic       predec_rs1_valid_lane0, predec_rs2_valid_lane0, predec_rd_valid_lane0;
   logic       is_csr_D_lane0;
   logic       is_mem_D_lane0;
+  logic       is_mul_D_lane0;
 
   logic [4:0] predec_rs1_addr_lane1, predec_rs2_addr_lane1, predec_rd_addr_lane1;
   logic       predec_rs1_valid_lane1, predec_rs2_valid_lane1, predec_rd_valid_lane1;
   logic       is_csr_D_lane1;
   logic       is_mem_D_lane1;
+  logic       is_mul_D_lane1;
 
   proj3_ProcPreDecode predecode_D_lane0
   (
@@ -180,7 +207,8 @@ module proj3_ProcDpath
     .rs2_valid  (predec_rs2_valid_lane0),
     .rd_valid   (predec_rd_valid_lane0),
     .is_csr     (is_csr_D_lane0),
-    .is_mem     (is_mem_D_lane0)
+    .is_mem     (is_mem_D_lane0),
+    .is_mul     (is_mul_D_lane0)
   );
 
   proj3_ProcPreDecode predecode_D_lane1
@@ -193,7 +221,8 @@ module proj3_ProcDpath
     .rs2_valid  (predec_rs2_valid_lane1),
     .rd_valid   (predec_rd_valid_lane1),
     .is_csr     (is_csr_D_lane1),
-    .is_mem     (is_mem_D_lane1)
+    .is_mem     (is_mem_D_lane1),
+    .is_mul     (is_mul_D_lane1)
   );
 
   //--------------------------------------------------------------------
@@ -275,7 +304,8 @@ module proj3_ProcDpath
 
   logic [c_rob_tag_nbits-1:0] alloc_tag_D_lane0;
   logic [c_rob_tag_nbits-1:0] alloc_tag_D_lane1;
-  logic [c_rob_tag_nbits-1:0] rob_tag_X;
+  logic [c_rob_tag_nbits-1:0] rob_tag_alu0_X;
+  logic [c_rob_tag_nbits-1:0] rob_tag_alu1_X;
   logic [c_rob_tag_nbits-1:0] rob_tag_Y3;
 
   logic        commit_val;
@@ -325,13 +355,13 @@ module proj3_ProcDpath
     .rob_alloc_rdy_D          (rob_alloc_rdy_D),
     .rob_full                 (rob_full_D),
 
-    .wb_req_alu0        (rob_fill_val_W),
-    .wb_tag_alu0        (rob_tag_X),
+    .wb_req_alu0        (rob_fill_val_alu0_W),
+    .wb_tag_alu0        (rob_tag_alu0_X),
 
-    .wb_req_alu1        (1'b0),
-    .wb_tag_alu1        ('0),
+    .wb_req_alu1        (rob_fill_val_alu1_W),
+    .wb_tag_alu1        (rob_tag_alu1_X),
 
-    .wb_req_mul         (rob_fill_val_Y3),
+    .wb_req_mul         (rob_fill_val_mul_Y3),
     .wb_tag_mul         (rob_tag_Y3),
 
     .wb_req_mem         (load_wb_fire),
@@ -353,7 +383,32 @@ module proj3_ProcDpath
   logic                         iq_dispatch_rd_valid;
   logic [c_rob_tag_nbits-1:0]   iq_dispatch_rob_tag;
 
-  logic [c_preg_addr_nbits-1:0] rd_paddr_X;
+  logic [c_rob_tag_nbits-1:0]   alu0_dispatch_rob_tag;
+  logic [c_preg_addr_nbits-1:0] alu0_dispatch_rs1_addr;
+  logic [c_preg_addr_nbits-1:0] alu0_dispatch_rs2_addr;
+  logic [c_preg_addr_nbits-1:0] alu0_dispatch_rd_addr;
+  logic                         alu0_dispatch_rd_valid;
+
+  logic [c_rob_tag_nbits-1:0]   alu1_dispatch_rob_tag;
+  logic [c_preg_addr_nbits-1:0] alu1_dispatch_rs1_addr;
+  logic [c_preg_addr_nbits-1:0] alu1_dispatch_rs2_addr;
+  logic [c_preg_addr_nbits-1:0] alu1_dispatch_rd_addr;
+  logic                         alu1_dispatch_rd_valid;
+
+  logic [c_rob_tag_nbits-1:0]   mul_dispatch_rob_tag;
+  logic [c_preg_addr_nbits-1:0] mul_dispatch_rs1_addr;
+  logic [c_preg_addr_nbits-1:0] mul_dispatch_rs2_addr;
+  logic [c_preg_addr_nbits-1:0] mul_dispatch_rd_addr;
+  logic                         mul_dispatch_rd_valid;
+
+  logic [c_rob_tag_nbits-1:0]   mem_dispatch_rob_tag;
+  logic [c_preg_addr_nbits-1:0] mem_dispatch_rs1_addr;
+  logic [c_preg_addr_nbits-1:0] mem_dispatch_rs2_addr;
+  logic [c_preg_addr_nbits-1:0] mem_dispatch_rd_addr;
+  logic                         mem_dispatch_rd_valid;
+
+  logic [c_preg_addr_nbits-1:0] rd_paddr_alu0_X;
+  logic [c_preg_addr_nbits-1:0] rd_paddr_alu1_X;
   logic [c_preg_addr_nbits-1:0] rd_paddr_Y3;
 
   logic                         mem_issue_rdy;
@@ -375,11 +430,13 @@ module proj3_ProcDpath
     .input_rob_tag_lane0     (alloc_tag_D_lane0),
     .input_is_csr_lane0      (is_csr_D_lane0),
     .input_is_mem_lane0      (is_mem_D_lane0),
+    .input_is_mul_lane0      (is_mul_D_lane0),
 
     .input_inst_lane1        (inst_D_lane1),
     .input_rob_tag_lane1     (alloc_tag_D_lane1),
     .input_is_csr_lane1      (is_csr_D_lane1),
     .input_is_mem_lane1      (is_mem_D_lane1),
+    .input_is_mul_lane1      (is_mul_D_lane1),
 
     .input_rs1_addr_lane0    (rs1_paddr_D_lane0),
     .input_rs1_valid_lane0   (rs1_paddr_valid_D_lane0),
@@ -395,82 +452,270 @@ module proj3_ProcDpath
     .input_rd_addr_lane1     (rd_paddr_new_D_lane1),
     .input_rd_valid_lane1    (rd_rename_valid_D_lane1),
 
-    .dispatch_val      (iq_dispatch_val),
-    .dispatch_rdy      (iq_dispatch_rdy),
+    .alu0_dispatch_val      (alu0_dispatch_val),
+    .alu0_dispatch_rdy      (alu0_dispatch_rdy),
+    .alu0_dispatch_inst     (alu0_dispatch_inst),
+    .alu0_dispatch_rob_tag  (alu0_dispatch_rob_tag),
+    .alu0_dispatch_rs1_addr (alu0_dispatch_rs1_addr),
+    .alu0_dispatch_rs2_addr (alu0_dispatch_rs2_addr),
+    .alu0_dispatch_rd_addr  (alu0_dispatch_rd_addr),
+    .alu0_dispatch_rd_valid (alu0_dispatch_rd_valid),
 
-    .mem_issue_rdy      (mem_issue_rdy),
+    .alu1_dispatch_val      (alu1_dispatch_val),
+    .alu1_dispatch_rdy      (alu1_dispatch_rdy),
+    .alu1_dispatch_inst     (alu1_dispatch_inst),
+    .alu1_dispatch_rob_tag  (alu1_dispatch_rob_tag),
+    .alu1_dispatch_rs1_addr (alu1_dispatch_rs1_addr),
+    .alu1_dispatch_rs2_addr (alu1_dispatch_rs2_addr),
+    .alu1_dispatch_rd_addr  (alu1_dispatch_rd_addr),
+    .alu1_dispatch_rd_valid (alu1_dispatch_rd_valid),
 
-    .dispatch_inst     (iq_dispatch_inst),
-    .dispatch_rob_tag  (iq_dispatch_rob_tag),
-    .dispatch_rs1_addr (iq_dispatch_rs1_addr),
-    .dispatch_rs2_addr (iq_dispatch_rs2_addr),
-    .dispatch_rd_addr  (iq_dispatch_rd_addr),
-    .dispatch_rd_valid (iq_dispatch_rd_valid),
+    .mul_dispatch_val      (mul_dispatch_val),
+    .mul_dispatch_rdy      (mul_dispatch_rdy),
+    .mul_dispatch_inst     (mul_dispatch_inst),
+    .mul_dispatch_rob_tag  (mul_dispatch_rob_tag),
+    .mul_dispatch_rs1_addr (mul_dispatch_rs1_addr),
+    .mul_dispatch_rs2_addr (mul_dispatch_rs2_addr),
+    .mul_dispatch_rd_addr  (mul_dispatch_rd_addr),
+    .mul_dispatch_rd_valid (mul_dispatch_rd_valid),
 
-    .rf_wen0           (rf_wen_W),
-    .rf_waddr0         (rd_paddr_X),
-    .rf_wen1           (rf_wen_Y3),
-    .rf_waddr1         (rd_paddr_Y3),
-    .rf_wen2           (load_prf_wen),
-    .rf_waddr2         (load_ostream_rd_paddr)
+    .mem_dispatch_val      (mem_dispatch_val),
+    .mem_dispatch_rdy      (mem_dispatch_rdy),
+    .mem_dispatch_inst     (mem_dispatch_inst),
+    .mem_dispatch_rob_tag  (mem_dispatch_rob_tag),
+    .mem_dispatch_rs1_addr (mem_dispatch_rs1_addr),
+    .mem_dispatch_rs2_addr (mem_dispatch_rs2_addr),
+    .mem_dispatch_rd_addr  (mem_dispatch_rd_addr),
+    .mem_dispatch_rd_valid (mem_dispatch_rd_valid),
+
+    .rf_wen_alu0   (rf_wen_alu0_W),
+    .rf_waddr_alu0 (rd_paddr_alu0_X),
+    .rf_wen_alu1   (rf_wen_alu1_W),
+    .rf_waddr_alu1 (rd_paddr_alu1_X),
+    .rf_wen_mul    (rf_wen_mul_Y3),
+    .rf_waddr_mul  (rd_paddr_Y3),
+    .rf_wen_mem    (load_prf_wen),
+    .rf_waddr_mem  (load_ostream_rd_paddr)
   );
+
+  // Debug view for the existing single-instruction line trace.
+  always_comb begin
+    iq_dispatch_val      = 1'b0;
+    iq_dispatch_inst     = '0;
+    iq_dispatch_rob_tag  = '0;
+    iq_dispatch_rs1_addr = '0;
+    iq_dispatch_rs2_addr = '0;
+    iq_dispatch_rd_addr  = '0;
+    iq_dispatch_rd_valid = 1'b0;
+
+    if ( alu0_dispatch_val ) begin
+      iq_dispatch_val      = alu0_dispatch_val;
+      iq_dispatch_inst     = alu0_dispatch_inst;
+      iq_dispatch_rob_tag  = alu0_dispatch_rob_tag;
+      iq_dispatch_rs1_addr = alu0_dispatch_rs1_addr;
+      iq_dispatch_rs2_addr = alu0_dispatch_rs2_addr;
+      iq_dispatch_rd_addr  = alu0_dispatch_rd_addr;
+      iq_dispatch_rd_valid = alu0_dispatch_rd_valid;
+    end
+    else if ( alu1_dispatch_val ) begin
+      iq_dispatch_val      = alu1_dispatch_val;
+      iq_dispatch_inst     = alu1_dispatch_inst;
+      iq_dispatch_rob_tag  = alu1_dispatch_rob_tag;
+      iq_dispatch_rs1_addr = alu1_dispatch_rs1_addr;
+      iq_dispatch_rs2_addr = alu1_dispatch_rs2_addr;
+      iq_dispatch_rd_addr  = alu1_dispatch_rd_addr;
+      iq_dispatch_rd_valid = alu1_dispatch_rd_valid;
+    end
+    else if ( mul_dispatch_val ) begin
+      iq_dispatch_val      = mul_dispatch_val;
+      iq_dispatch_inst     = mul_dispatch_inst;
+      iq_dispatch_rob_tag  = mul_dispatch_rob_tag;
+      iq_dispatch_rs1_addr = mul_dispatch_rs1_addr;
+      iq_dispatch_rs2_addr = mul_dispatch_rs2_addr;
+      iq_dispatch_rd_addr  = mul_dispatch_rd_addr;
+      iq_dispatch_rd_valid = mul_dispatch_rd_valid;
+    end
+    else if ( mem_dispatch_val ) begin
+      iq_dispatch_val      = mem_dispatch_val;
+      iq_dispatch_inst     = mem_dispatch_inst;
+      iq_dispatch_rob_tag  = mem_dispatch_rob_tag;
+      iq_dispatch_rs1_addr = mem_dispatch_rs1_addr;
+      iq_dispatch_rs2_addr = mem_dispatch_rs2_addr;
+      iq_dispatch_rd_addr  = mem_dispatch_rd_addr;
+      iq_dispatch_rd_valid = mem_dispatch_rd_valid;
+    end
+  end
+
+  //--------------------------------------------------------------------
+  // Map the four dispatch channels onto two PRF read slots
+  //--------------------------------------------------------------------
+
+  logic [c_preg_addr_nbits-1:0] prf_raddr_issue0_rs1;
+  logic [c_preg_addr_nbits-1:0] prf_raddr_issue0_rs2;
+  logic [c_preg_addr_nbits-1:0] prf_raddr_issue1_rs1;
+  logic [c_preg_addr_nbits-1:0] prf_raddr_issue1_rs2;
+
+  logic alu0_uses_issue0, alu0_uses_issue1;
+  logic alu1_uses_issue0, alu1_uses_issue1;
+  logic mul_uses_issue0,  mul_uses_issue1;
+  logic mem_uses_issue0,  mem_uses_issue1;
+
+  always_comb begin : map_prf_read_slots
+    logic issue0_used;
+    logic issue1_used;
+
+    prf_raddr_issue0_rs1 = '0;
+    prf_raddr_issue0_rs2 = '0;
+    prf_raddr_issue1_rs1 = '0;
+    prf_raddr_issue1_rs2 = '0;
+
+    alu0_uses_issue0 = 1'b0;
+    alu0_uses_issue1 = 1'b0;
+    alu1_uses_issue0 = 1'b0;
+    alu1_uses_issue1 = 1'b0;
+    mul_uses_issue0  = 1'b0;
+    mul_uses_issue1  = 1'b0;
+    mem_uses_issue0  = 1'b0;
+    mem_uses_issue1  = 1'b0;
+
+    issue0_used = 1'b0;
+    issue1_used = 1'b0;
+
+    if ( alu0_dispatch_val ) begin
+      prf_raddr_issue0_rs1 = alu0_dispatch_rs1_addr;
+      prf_raddr_issue0_rs2 = alu0_dispatch_rs2_addr;
+      alu0_uses_issue0     = 1'b1;
+      issue0_used          = 1'b1;
+    end
+
+    if ( alu1_dispatch_val ) begin
+      if ( !issue0_used ) begin
+        prf_raddr_issue0_rs1 = alu1_dispatch_rs1_addr;
+        prf_raddr_issue0_rs2 = alu1_dispatch_rs2_addr;
+        alu1_uses_issue0     = 1'b1;
+        issue0_used          = 1'b1;
+      end
+      else begin
+        prf_raddr_issue1_rs1 = alu1_dispatch_rs1_addr;
+        prf_raddr_issue1_rs2 = alu1_dispatch_rs2_addr;
+        alu1_uses_issue1     = 1'b1;
+        issue1_used          = 1'b1;
+      end
+    end
+
+    if ( mul_dispatch_val ) begin
+      if ( !issue0_used ) begin
+        prf_raddr_issue0_rs1 = mul_dispatch_rs1_addr;
+        prf_raddr_issue0_rs2 = mul_dispatch_rs2_addr;
+        mul_uses_issue0      = 1'b1;
+        issue0_used          = 1'b1;
+      end
+      else if ( !issue1_used ) begin
+        prf_raddr_issue1_rs1 = mul_dispatch_rs1_addr;
+        prf_raddr_issue1_rs2 = mul_dispatch_rs2_addr;
+        mul_uses_issue1      = 1'b1;
+        issue1_used          = 1'b1;
+      end
+    end
+
+    if ( mem_dispatch_val ) begin
+      if ( !issue0_used ) begin
+        prf_raddr_issue0_rs1 = mem_dispatch_rs1_addr;
+        prf_raddr_issue0_rs2 = mem_dispatch_rs2_addr;
+        mem_uses_issue0      = 1'b1;
+      end
+      else if ( !issue1_used ) begin
+        prf_raddr_issue1_rs1 = mem_dispatch_rs1_addr;
+        prf_raddr_issue1_rs2 = mem_dispatch_rs2_addr;
+        mem_uses_issue1      = 1'b1;
+      end
+    end
+  end
 
   //--------------------------------------------------------------------
   // Issue stage (RR merged into Issue)
   //--------------------------------------------------------------------
 
-  logic [31:0] dispatch_imm_I;
+  logic [31:0] alu0_imm_I;
+  logic [31:0] alu1_imm_I;
+  logic [31:0] mem_imm_I;
 
-  logic [31:0] prf_rdata0_I;
-  logic [31:0] prf_rdata1_I;
+  logic [31:0] prf_rdata_issue0_rs1_I;
+  logic [31:0] prf_rdata_issue0_rs2_I;
+  logic [31:0] prf_rdata_issue1_rs1_I;
+  logic [31:0] prf_rdata_issue1_rs2_I;
 
-  logic [31:0] op1_issue;
-  logic [31:0] op2_issue;
-  logic [31:0] csrr_data_I;
+  logic [31:0] alu0_rs1_data_I;
+  logic [31:0] alu0_rs2_data_I;
+  logic [31:0] alu1_rs1_data_I;
+  logic [31:0] alu1_rs2_data_I;
+  logic [31:0] mul_rs1_data_I;
+  logic [31:0] mul_rs2_data_I;
+  logic [31:0] mem_rs1_data_I;
+  logic [31:0] mem_rs2_data_I;
+
+  logic [31:0] alu0_op1_I;
+  logic [31:0] alu0_op2_I;
+  logic [31:0] alu1_op1_I;
+  logic [31:0] alu1_op2_I;
+  logic [31:0] alu0_csrr_data_I;
   logic [31:0] num_cores;
 
-  assign num_cores        = p_num_cores;
+  assign num_cores = p_num_cores;
 
-  proj3_ProcDpathImmGen imm_gen_I
+  proj3_ProcDpathImmGen alu0_imm_gen_I
   (
-    .imm_type (imm_type_I),
-    .inst     (iq_dispatch_inst),
-    .imm      (dispatch_imm_I)
+    .imm_type (alu0_imm_type_I),
+    .inst     (alu0_dispatch_inst),
+    .imm      (alu0_imm_I)
+  );
+
+  proj3_ProcDpathImmGen alu1_imm_gen_I
+  (
+    .imm_type (alu1_imm_type_I),
+    .inst     (alu1_dispatch_inst),
+    .imm      (alu1_imm_I)
+  );
+
+  proj3_ProcDpathImmGen mem_imm_gen_I
+  (
+    .imm_type (mem_imm_type_I),
+    .inst     (mem_dispatch_inst),
+    .imm      (mem_imm_I)
   );
 
   //--------------------------------------------------------------------
   // Physical Register File (PRF) 
   //--------------------------------------------------------------------
 
-  logic [31:0] alu_result_X;
+  logic [31:0] alu0_result_X;
+  logic [31:0] alu1_result_X;
   logic [31:0] imul_ostream_msg_W;
-  logic [31:0] prf_rdata_issue1_rs1_I;
-  logic [31:0] prf_rdata_issue1_rs2_I;
 
   proj3_ProcPregfile prf
   (
     .clk      (clk),
     .reset    (reset),
 
-    .rd_addr_issue0_rs1 (iq_dispatch_rs1_addr),
-    .rd_data_issue0_rs1 (prf_rdata0_I),
-    .rd_addr_issue0_rs2 (iq_dispatch_rs2_addr),
-    .rd_data_issue0_rs2 (prf_rdata1_I),
+    .rd_addr_issue0_rs1 (prf_raddr_issue0_rs1),
+    .rd_data_issue0_rs1 (prf_rdata_issue0_rs1_I),
+    .rd_addr_issue0_rs2 (prf_raddr_issue0_rs2),
+    .rd_data_issue0_rs2 (prf_rdata_issue0_rs2_I),
 
-    .rd_addr_issue1_rs1 (6'd0),
+    .rd_addr_issue1_rs1 (prf_raddr_issue1_rs1),
     .rd_data_issue1_rs1 (prf_rdata_issue1_rs1_I),
-    .rd_addr_issue1_rs2 (6'd0),
+    .rd_addr_issue1_rs2 (prf_raddr_issue1_rs2),
     .rd_data_issue1_rs2 (prf_rdata_issue1_rs2_I),
 
-    .wr_en_alu0   (rf_wen_W),
-    .wr_addr_alu0 (rd_paddr_X),
-    .wr_data_alu0 (alu_result_X),
+    .wr_en_alu0   (rf_wen_alu0_W),
+    .wr_addr_alu0 (rd_paddr_alu0_X),
+    .wr_data_alu0 (alu0_result_X),
 
-    .wr_en_alu1   (1'b0),
-    .wr_addr_alu1 (6'd0),
-    .wr_data_alu1 (32'd0),
+    .wr_en_alu1   (rf_wen_alu1_W),
+    .wr_addr_alu1 (rd_paddr_alu1_X),
+    .wr_data_alu1 (alu1_result_X),
 
-    .wr_en_mul   (rf_wen_Y3),
+    .wr_en_mul   (rf_wen_mul_Y3),
     .wr_addr_mul (rd_paddr_Y3),
     .wr_data_mul (imul_ostream_msg_W),
 
@@ -479,75 +724,151 @@ module proj3_ProcDpath
     .wr_data_mem (load_ostream_data)
   );
 
-  assign op1_issue = prf_rdata0_I;
+  assign alu0_rs1_data_I = alu0_uses_issue0 ? prf_rdata_issue0_rs1_I
+                           : alu0_uses_issue1 ? prf_rdata_issue1_rs1_I : 32'd0;
+  assign alu0_rs2_data_I = alu0_uses_issue0 ? prf_rdata_issue0_rs2_I
+                           : alu0_uses_issue1 ? prf_rdata_issue1_rs2_I : 32'd0;
+  assign alu1_rs1_data_I = alu1_uses_issue0 ? prf_rdata_issue0_rs1_I
+                           : alu1_uses_issue1 ? prf_rdata_issue1_rs1_I : 32'd0;
+  assign alu1_rs2_data_I = alu1_uses_issue0 ? prf_rdata_issue0_rs2_I
+                           : alu1_uses_issue1 ? prf_rdata_issue1_rs2_I : 32'd0;
+  assign mul_rs1_data_I  = mul_uses_issue0 ? prf_rdata_issue0_rs1_I
+                           : mul_uses_issue1 ? prf_rdata_issue1_rs1_I : 32'd0;
+  assign mul_rs2_data_I  = mul_uses_issue0 ? prf_rdata_issue0_rs2_I
+                           : mul_uses_issue1 ? prf_rdata_issue1_rs2_I : 32'd0;
+  assign mem_rs1_data_I  = mem_uses_issue0 ? prf_rdata_issue0_rs1_I
+                           : mem_uses_issue1 ? prf_rdata_issue1_rs1_I : 32'd0;
+  assign mem_rs2_data_I  = mem_uses_issue0 ? prf_rdata_issue0_rs2_I
+                           : mem_uses_issue1 ? prf_rdata_issue1_rs2_I : 32'd0;
 
-  vc_Mux3 #(32) csrr_sel_mux_I
+  assign alu0_op1_I = alu0_rs1_data_I;
+  assign alu1_op1_I = alu1_rs1_data_I;
+
+  vc_Mux3 #(32) alu0_csrr_sel_mux_I
   (
     .in0  (mngr2proc_data),
     .in1  (num_cores),
     .in2  (core_id),
-    .sel  (csrr_sel_I),
-    .out  (csrr_data_I)
+    .sel  (alu0_csrr_sel_I),
+    .out  (alu0_csrr_data_I)
   );
 
-  vc_Mux3 #(32) op2_sel_mux_I
+  vc_Mux3 #(32) alu0_op2_sel_mux_I
   (
-    .in0  (prf_rdata1_I),
-    .in1  (dispatch_imm_I),
-    .in2  (csrr_data_I),
-    .sel  (op2_sel_I),
-    .out  (op2_issue)
+    .in0  (alu0_rs2_data_I),
+    .in1  (alu0_imm_I),
+    .in2  (alu0_csrr_data_I),
+    .sel  (alu0_op2_sel_I),
+    .out  (alu0_op2_I)
+  );
+
+  vc_Mux3 #(32) alu1_op2_sel_mux_I
+  (
+    .in0  (alu1_rs2_data_I),
+    .in1  (alu1_imm_I),
+    .in2  (32'd0),
+    .sel  (alu1_op2_sel_I),
+    .out  (alu1_op2_I)
   );
 
   //--------------------------------------------------------------------
   // Execute Stage
   //--------------------------------------------------------------------
 
-  logic [31:0] op1_X;
-  logic [31:0] op2_X;
+  logic [31:0] alu0_op1_X;
+  logic [31:0] alu0_op2_X;
+  logic [31:0] alu1_op1_X;
+  logic [31:0] alu1_op2_X;
 
-  vc_EnResetReg #(32, 0) op1_reg_X
+  vc_EnResetReg #(32, 0) alu0_op1_reg_X
   (
     .clk   (clk),
     .reset (reset),
-    .en    (alu_issue_fire_I),
-    .d     (op1_issue),
-    .q     (op1_X)
+    .en    (alu0_issue_fire_I),
+    .d     (alu0_op1_I),
+    .q     (alu0_op1_X)
   );
 
-  vc_EnResetReg #(32, 0) op2_reg_X
+  vc_EnResetReg #(32, 0) alu0_op2_reg_X
   (
     .clk   (clk),
     .reset (reset),
-    .en    (alu_issue_fire_I),
-    .d     (op2_issue),
-    .q     (op2_X)
+    .en    (alu0_issue_fire_I),
+    .d     (alu0_op2_I),
+    .q     (alu0_op2_X)
   );
 
-  vc_EnResetReg #(c_rob_tag_nbits, 0) rob_tag_reg_X
+  vc_EnResetReg #(c_rob_tag_nbits, 0) alu0_rob_tag_reg_X
   (
     .clk   (clk),
     .reset (reset),
-    .en    (alu_issue_fire_I),
-    .d     (iq_dispatch_rob_tag),
-    .q     (rob_tag_X)
+    .en    (alu0_issue_fire_I),
+    .d     (alu0_dispatch_rob_tag),
+    .q     (rob_tag_alu0_X)
   );
 
-  vc_EnResetReg #(c_preg_addr_nbits, 0) rd_paddr_reg_X
+  vc_EnResetReg #(c_preg_addr_nbits, 0) alu0_rd_paddr_reg_X
   (
     .clk   (clk),
     .reset (reset),
-    .en    (alu_issue_fire_I),
-    .d     (iq_dispatch_rd_addr),
-    .q     (rd_paddr_X)
+    .en    (alu0_issue_fire_I),
+    .d     (alu0_dispatch_rd_addr),
+    .q     (rd_paddr_alu0_X)
   );
 
-  proj3_ProcDpathAlu alu
+  proj3_ProcDpathAlu alu0
   (
-    .in0     (op1_X),
-    .in1     (op2_X),
-    .fn      (alu_fn_X),
-    .out     (alu_result_X),
+    .in0     (alu0_op1_X),
+    .in1     (alu0_op2_X),
+    .fn      (alu0_fn_X),
+    .out     (alu0_result_X),
+    .ops_eq  (),
+    .ops_lt  (),
+    .ops_ltu ()
+  );
+
+  vc_EnResetReg #(32, 0) alu1_op1_reg_X
+  (
+    .clk   (clk),
+    .reset (reset),
+    .en    (alu1_issue_fire_I),
+    .d     (alu1_op1_I),
+    .q     (alu1_op1_X)
+  );
+
+  vc_EnResetReg #(32, 0) alu1_op2_reg_X
+  (
+    .clk   (clk),
+    .reset (reset),
+    .en    (alu1_issue_fire_I),
+    .d     (alu1_op2_I),
+    .q     (alu1_op2_X)
+  );
+
+  vc_EnResetReg #(c_rob_tag_nbits, 0) alu1_rob_tag_reg_X
+  (
+    .clk   (clk),
+    .reset (reset),
+    .en    (alu1_issue_fire_I),
+    .d     (alu1_dispatch_rob_tag),
+    .q     (rob_tag_alu1_X)
+  );
+
+  vc_EnResetReg #(c_preg_addr_nbits, 0) alu1_rd_paddr_reg_X
+  (
+    .clk   (clk),
+    .reset (reset),
+    .en    (alu1_issue_fire_I),
+    .d     (alu1_dispatch_rd_addr),
+    .q     (rd_paddr_alu1_X)
+  );
+
+  proj3_ProcDpathAlu alu1
+  (
+    .in0     (alu1_op1_X),
+    .in1     (alu1_op2_X),
+    .fn      (alu1_fn_X),
+    .out     (alu1_result_X),
     .ops_eq  (),
     .ops_lt  (),
     .ops_ltu ()
@@ -574,8 +895,8 @@ module proj3_ProcDpath
     end
     else begin
       if ( mul_issue_fire_I ) begin
-        mul_tag_Y0  <= iq_dispatch_rob_tag;
-        mul_pdst_Y0 <= iq_dispatch_rd_addr;
+        mul_tag_Y0  <= mul_dispatch_rob_tag;
+        mul_pdst_Y0 <= mul_dispatch_rd_addr;
       end
 
       mul_tag_Y1  <= mul_tag_Y0;
@@ -597,7 +918,7 @@ module proj3_ProcDpath
     .reset       (reset),
     .istream_val (mul_issue_fire_I),
     .istream_rdy (imul_istream_rdy_I),
-    .istream_msg ({op1_issue, op2_issue}),
+    .istream_msg ({mul_rs1_data_I, mul_rs2_data_I}),
     .ostream_val (imul_ostream_val_W),
     .ostream_rdy (imul_ostream_rdy_W),
     .ostream_msg (imul_ostream_msg_W)
@@ -619,13 +940,13 @@ module proj3_ProcDpath
 
     .istream_val              (mem_issue_fire_I),
     .istream_rdy              (load_istream_rdy_I),
-    .istream_base             (prf_rdata0_I),
-    .istream_imm              (dispatch_imm_I),
-    .istream_rd_paddr         (iq_dispatch_rd_addr),
-    .istream_rob_idx          (iq_dispatch_rob_tag),
+    .istream_base             (mem_rs1_data_I),
+    .istream_imm              (mem_imm_I),
+    .istream_rd_paddr         (mem_dispatch_rd_addr),
+    .istream_rob_idx          (mem_dispatch_rob_tag),
 
-    .istream_is_sw            (is_sw_I),
-    .istream_sw_data          (prf_rdata1_I),
+    .istream_is_sw            (mem_is_sw_I),
+    .istream_sw_data          (mem_rs2_data_I),
 
     .dmem_reqstream_val       (dmem_reqstream_val),
     .dmem_reqstream_rdy       (dmem_reqstream_rdy),
@@ -649,7 +970,7 @@ module proj3_ProcDpath
   // Writeback side & Status
   //--------------------------------------------------------------------
 
-  assign proc2mngr_data = alu_result_X;
+  assign proc2mngr_data = alu0_result_X;
 
   logic [31:0] stats_en_W;
   assign stats_en = |stats_en_W;
@@ -659,12 +980,12 @@ module proj3_ProcDpath
     .clk    (clk),
     .reset  (reset),
     .en     (stats_en_wen_W),
-    .d      (alu_result_X),
+    .d      (alu0_result_X),
     .q      (stats_en_W)
   );
 
-  assign xcel_reqstream_msg_addr = op2_X[4:0];
-  assign xcel_reqstream_msg_data = op1_X;
+  assign xcel_reqstream_msg_addr = alu0_op2_X[4:0];
+  assign xcel_reqstream_msg_data = alu0_op1_X;
 
 endmodule
 

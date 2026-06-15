@@ -36,25 +36,35 @@ module proj3_ProcCtrl
   output logic        reg_en_D,
   output logic        iq_input_val_D,
   output logic        rob_alloc_req_D,
-  output logic        iq_dispatch_rdy,
 
-  output logic [2:0]  imm_type_I,
-  output logic [1:0]  op2_sel_I,
-  output logic [1:0]  csrr_sel_I,
-  output logic        alu_issue_fire_I,
+  output logic        alu0_dispatch_rdy,
+  output logic        alu1_dispatch_rdy,
+  output logic        mul_dispatch_rdy,
+  output logic        mem_dispatch_rdy,
+
+  output logic [2:0]  alu0_imm_type_I,
+  output logic [1:0]  alu0_op2_sel_I,
+  output logic [1:0]  alu0_csrr_sel_I,
+  output logic        alu0_issue_fire_I,
+
+  output logic [2:0]  alu1_imm_type_I,
+  output logic [1:0]  alu1_op2_sel_I,
+  output logic        alu1_issue_fire_I,
+
   output logic        mul_issue_fire_I,
   output logic        mem_issue_fire_I,
-  output logic        is_sw_I,
+  output logic [2:0]  mem_imm_type_I,
+  output logic        mem_is_sw_I,
 
-  output logic [3:0]  alu_fn_X,
+  output logic [3:0]  alu0_fn_X,
+  output logic [3:0]  alu1_fn_X,
 
-  output logic [4:0]  rf_waddr_W,
-  output logic        rf_wen_W,
-  output logic        rob_fill_val_W,
-  output logic        rob_fill_val_Y3,
-
-  output logic [4:0]  rf_waddr_Y3,
-  output logic        rf_wen_Y3,
+  output logic        rf_wen_alu0_W,
+  output logic        rf_wen_alu1_W,
+  output logic        rf_wen_mul_Y3,
+  output logic        rob_fill_val_alu0_W,
+  output logic        rob_fill_val_alu1_W,
+  output logic        rob_fill_val_mul_Y3,
 
   output logic        imul_ostream_rdy_W,
   output logic        stats_en_wen_W,
@@ -66,8 +76,14 @@ module proj3_ProcCtrl
   input  logic        rob_full_D,
   input  logic        rename_rdy_D,
 
-  input  logic        iq_dispatch_val,
-  input  logic [31:0] iq_dispatch_inst,
+  input  logic        alu0_dispatch_val,
+  input  logic [31:0] alu0_dispatch_inst,
+  input  logic        alu1_dispatch_val,
+  input  logic [31:0] alu1_dispatch_inst,
+  input  logic        mul_dispatch_val,
+  input  logic [31:0] mul_dispatch_inst,
+  input  logic        mem_dispatch_val,
+  input  logic [31:0] mem_dispatch_inst,
 
   input  logic        imul_istream_rdy_I,
   input  logic        imul_ostream_val_W,
@@ -103,7 +119,8 @@ module proj3_ProcCtrl
 
   logic val_F;
   logic val_D;
-  logic val_X;
+  logic val_alu0_X;
+  logic val_alu1_X;
 
   logic stall_F;
   logic stall_D;
@@ -111,8 +128,13 @@ module proj3_ProcCtrl
 
   logic next_val_F;
 
-  logic iq_dispatch_fire;
+  logic alu0_dispatch_fire;
+  logic alu1_dispatch_fire;
   logic issue_stall_Q;
+
+  // Reuse the existing detailed decoder for the ALU0/CSR channel.
+  wire        iq_dispatch_val  = alu0_dispatch_val;
+  wire [31:0] iq_dispatch_inst = alu0_dispatch_inst;
 
   assign imem_respstream_drop = 1'b0;
 
@@ -308,47 +330,89 @@ module proj3_ProcCtrl
   end
 
   //----------------------------------------------------------------------
+  // ALU1 decode (integer instructions only; CSR is restricted to ALU0)
+  //----------------------------------------------------------------------
+
+  logic [2:0] dec_alu1_imm_type_Q;
+  logic [1:0] dec_alu1_op2_sel_Q;
+  logic [3:0] dec_alu1_fn_Q;
+  logic       dec_alu1_rf_wen_Q;
+
+  always_comb begin
+    dec_alu1_imm_type_Q = imm_i;
+    dec_alu1_op2_sel_Q  = bm_rf;
+    dec_alu1_fn_Q       = alu_add;
+    dec_alu1_rf_wen_Q   = 1'b0;
+
+    casez ( alu1_dispatch_inst )
+      `TINYRV2_INST_NOP  : begin dec_alu1_fn_Q = alu_add; dec_alu1_rf_wen_Q = 1'b0; end
+      `TINYRV2_INST_ADD  : begin dec_alu1_fn_Q = alu_add; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SUB  : begin dec_alu1_fn_Q = alu_sub; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_AND  : begin dec_alu1_fn_Q = alu_and; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_OR   : begin dec_alu1_fn_Q = alu_or;  dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_XOR  : begin dec_alu1_fn_Q = alu_xor; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLT  : begin dec_alu1_fn_Q = alu_lt;  dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLTU : begin dec_alu1_fn_Q = alu_ltu; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SRA  : begin dec_alu1_fn_Q = alu_sra; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SRL  : begin dec_alu1_fn_Q = alu_srl; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLL  : begin dec_alu1_fn_Q = alu_sll; dec_alu1_rf_wen_Q = 1'b1; end
+
+      `TINYRV2_INST_ADDI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_add; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_ANDI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_and; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_ORI  : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_or;  dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_XORI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_xor; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLTI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_lt;  dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLTIU: begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_ltu; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SRAI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_sra; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SRLI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_srl; dec_alu1_rf_wen_Q = 1'b1; end
+      `TINYRV2_INST_SLLI : begin dec_alu1_op2_sel_Q = bm_imm; dec_alu1_fn_Q = alu_sll; dec_alu1_rf_wen_Q = 1'b1; end
+      default            : begin dec_alu1_fn_Q = alu_add; dec_alu1_rf_wen_Q = 1'b0; end
+    endcase
+  end
+
+  //----------------------------------------------------------------------
   // Issue-side backpressure / handshake
   //----------------------------------------------------------------------
 
-  logic ostall_mul_issue_Q;
-  logic ostall_mem_issue_Q;
   logic ostall_mngr2proc_Q;
-
-  assign ostall_mul_issue_Q
-    = iq_dispatch_val && dec_mul_Q && !imul_istream_rdy_I;
-
-  assign ostall_mem_issue_Q
-    = iq_dispatch_val && ( dec_load_Q || dec_store_Q ) && !load_istream_rdy_I;
 
   assign ostall_mngr2proc_Q
     = iq_dispatch_val && csrr_mngr2proc_Q && !mngr2proc_val;
 
-  assign issue_stall_Q = stall_W
-                       || ostall_mul_issue_Q
-                       || ostall_mem_issue_Q
-                       || ostall_mngr2proc_Q;
+  assign issue_stall_Q = stall_W || ostall_mngr2proc_Q;
 
-  assign iq_dispatch_rdy  = !issue_stall_Q;
-  assign iq_dispatch_fire = iq_dispatch_val && iq_dispatch_rdy;
+  assign alu0_dispatch_rdy = !issue_stall_Q;
+  assign alu1_dispatch_rdy = !stall_W;
+  assign mul_dispatch_rdy  = imul_istream_rdy_I;
+  assign mem_dispatch_rdy  = load_istream_rdy_I;
 
-  assign imm_type_I         = dec_imm_type_Q;
-  assign op2_sel_I          = dec_op2_sel_Q;
-  assign csrr_sel_I         = csrr_sel_final_Q;
-  assign alu_issue_fire_I   = iq_dispatch_fire && !dec_mul_Q && !( dec_load_Q || dec_store_Q );
-  assign mul_issue_fire_I   = iq_dispatch_fire && dec_mul_Q;
-  assign mem_issue_fire_I   = iq_dispatch_fire && ( dec_load_Q || dec_store_Q );
-  assign is_sw_I            = dec_store_Q;
+  assign alu0_dispatch_fire = alu0_dispatch_val && alu0_dispatch_rdy;
+  assign alu1_dispatch_fire = alu1_dispatch_val && alu1_dispatch_rdy;
 
-  assign mngr2proc_rdy      = iq_dispatch_fire && csrr_mngr2proc_Q;
+  assign alu0_imm_type_I   = dec_imm_type_Q;
+  assign alu0_op2_sel_I    = dec_op2_sel_Q;
+  assign alu0_csrr_sel_I   = csrr_sel_final_Q;
+  assign alu0_issue_fire_I = alu0_dispatch_fire;
+
+  assign alu1_imm_type_I   = dec_alu1_imm_type_Q;
+  assign alu1_op2_sel_I    = dec_alu1_op2_sel_Q;
+  assign alu1_issue_fire_I = alu1_dispatch_fire;
+
+  assign mul_issue_fire_I = mul_dispatch_val && mul_dispatch_rdy;
+  assign mem_issue_fire_I = mem_dispatch_val && mem_dispatch_rdy;
+  assign mem_is_sw_I      = ( mem_dispatch_inst[6:0] == 7'b0100011 );
+  assign mem_imm_type_I   = mem_is_sw_I ? imm_s : imm_i;
+
+  assign mngr2proc_rdy = alu0_dispatch_fire && csrr_mngr2proc_Q;
 
   //----------------------------------------------------------------------
   // X stage control pipeline
   //----------------------------------------------------------------------
 
-  logic       rf_wen_X_r;
-  logic [4:0] rf_waddr_X_r;
-  logic [3:0] alu_fn_X_r;
+  logic       rf_wen_alu0_X_r;
+  logic       rf_wen_alu1_X_r;
+  logic [3:0] alu0_fn_X_r;
+  logic [3:0] alu1_fn_X_r;
   logic       proc2mngr_X_r;
   logic       stats_en_wen_X_r;
 
@@ -358,30 +422,36 @@ module proj3_ProcCtrl
 
   always_ff @(posedge clk) begin
     if ( reset ) begin
-      val_X            <= 1'b0;
-      rf_wen_X_r       <= 1'b0;
-      rf_waddr_X_r     <= 5'd0;
-      alu_fn_X_r       <= alu_add;
+      val_alu0_X        <= 1'b0;
+      val_alu1_X        <= 1'b0;
+      rf_wen_alu0_X_r   <= 1'b0;
+      rf_wen_alu1_X_r   <= 1'b0;
+      alu0_fn_X_r       <= alu_add;
+      alu1_fn_X_r       <= alu_add;
       proc2mngr_X_r    <= 1'b0;
       stats_en_wen_X_r <= 1'b0;
     end
     else if ( x_pipe_en ) begin
-      val_X            <= alu_issue_fire_I;
-      rf_wen_X_r       <= dec_rf_wen_Q;
-      rf_waddr_X_r     <= inst_rd_Q;
-      alu_fn_X_r       <= dec_alu_fn_Q;
-      proc2mngr_X_r    <= proc2mngr_Q;
-      stats_en_wen_X_r <= stats_en_wen_Q;
+      val_alu0_X        <= alu0_issue_fire_I;
+      val_alu1_X        <= alu1_issue_fire_I;
+      rf_wen_alu0_X_r   <= alu0_issue_fire_I && dec_rf_wen_Q;
+      rf_wen_alu1_X_r   <= alu1_issue_fire_I && dec_alu1_rf_wen_Q;
+      alu0_fn_X_r       <= dec_alu_fn_Q;
+      alu1_fn_X_r       <= dec_alu1_fn_Q;
+      proc2mngr_X_r    <= alu0_issue_fire_I && proc2mngr_Q;
+      stats_en_wen_X_r <= alu0_issue_fire_I && stats_en_wen_Q;
     end
   end
 
-  assign alu_fn_X = alu_fn_X_r;
+  assign alu0_fn_X = alu0_fn_X_r;
+  assign alu1_fn_X = alu1_fn_X_r;
 
   //----------------------------------------------------------------------
   // Combinational writeback-side control
   //----------------------------------------------------------------------
 
-  logic take_x_now;
+  logic take_alu0_now;
+  logic take_alu1_now;
   logic take_mul_now;
   logic       mul_valid_Y0,  mul_valid_Y1,  mul_valid_Y2,  mul_valid_Y3;
   logic [4:0] mul_rd_Y0,     mul_rd_Y1,     mul_rd_Y2,     mul_rd_Y3;
@@ -389,26 +459,26 @@ module proj3_ProcCtrl
 
   logic       mul_pipe_en;
 
-  assign take_x_now = val_X;
+  assign take_alu0_now = val_alu0_X;
+  assign take_alu1_now = val_alu1_X;
 
   assign imul_ostream_rdy_W = 1'b1;
   assign mul_pipe_en        = imul_ostream_rdy_W;
 
   assign take_mul_now = mul_valid_Y3 && imul_ostream_val_W;
 
-  assign stall_W = take_x_now && proc2mngr_X_r && !proc2mngr_rdy;
+  assign stall_W = take_alu0_now && proc2mngr_X_r && !proc2mngr_rdy;
 
-  assign rf_waddr_W = take_x_now ? rf_waddr_X_r : 5'd0;
-  assign rf_wen_W   = !stall_W && take_x_now && rf_wen_X_r;
+  assign rf_wen_alu0_W = !stall_W && take_alu0_now && rf_wen_alu0_X_r;
+  assign rf_wen_alu1_W = !stall_W && take_alu1_now && rf_wen_alu1_X_r;
+  assign rf_wen_mul_Y3 = take_mul_now && mul_rf_wen_Y3;
 
-  assign rob_fill_val_W  = !stall_W && take_x_now;
-  assign rob_fill_val_Y3 = take_mul_now;
+  assign rob_fill_val_alu0_W = !stall_W && take_alu0_now;
+  assign rob_fill_val_alu1_W = !stall_W && take_alu1_now;
+  assign rob_fill_val_mul_Y3 = take_mul_now;
 
-  assign rf_waddr_Y3 = take_mul_now ? mul_rd_Y3 : 5'd0;
-  assign rf_wen_Y3   = take_mul_now && mul_rf_wen_Y3;
-
-  assign proc2mngr_val  = !stall_W && take_x_now && proc2mngr_X_r;
-  assign stats_en_wen_W = !stall_W && take_x_now && stats_en_wen_X_r;
+  assign proc2mngr_val  = !stall_W && take_alu0_now && proc2mngr_X_r;
+  assign stats_en_wen_W = !stall_W && take_alu0_now && stats_en_wen_X_r;
 
   //----------------------------------------------------------------------
   // MUL bookkeeping
@@ -433,8 +503,8 @@ module proj3_ProcCtrl
     end
     else if ( mul_pipe_en ) begin
       mul_valid_Y0    <= mul_issue_fire_I;
-      mul_rd_Y0       <= mul_issue_fire_I ? inst_rd_Q : 5'd0;
-      mul_rf_wen_Y0   <= mul_issue_fire_I && dec_rf_wen_Q;
+      mul_rd_Y0       <= mul_issue_fire_I ? mul_dispatch_inst[11:7] : 5'd0;
+      mul_rf_wen_Y0   <= mul_issue_fire_I;
 
       mul_valid_Y1    <= mul_valid_Y0;
       mul_valid_Y2    <= mul_valid_Y1;

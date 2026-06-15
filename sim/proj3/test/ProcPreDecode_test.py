@@ -1,10 +1,10 @@
 #=========================================================================
 # ProcPreDecode unit tests
 #=========================================================================
-# Updated for the mem-pipe revision: PreDecode now also emits two
-# instruction-class flags consumed by the IQ / Ctrl:
+# PreDecode emits lightweight instruction-class flags consumed by IQ/Ctrl:
 #   is_csr -> CSRR / CSRW    (opcode 7'b1110011)
 #   is_mem -> LW / SW         (opcode 7'b0000011 or 7'b0100011)
+#   is_mul -> MUL             (RV32M encoding)
 
 from pymtl3 import *
 from pymtl3.stdlib.test_utils import run_test_vector_sim
@@ -150,4 +150,18 @@ def test_predecode_class_exclusive( cmdline_opts ):
     [ 0b0000000_00010_00001_000_00000_1100011, 1, 2, 0,  1, 1, 0,  0, 0 ],
     # LUI  - neither
     [ 0b00000001000000000000_00001_0110111,    '?', '?', 1,  0, 0, 1,  0, 0 ],
+  ], cmdline_opts )
+
+#-------------------------------------------------------------------------
+# test MUL classification
+#-------------------------------------------------------------------------
+
+def test_predecode_mul( cmdline_opts ):
+  dut = ProcPreDecode()
+
+  run_test_vector_sim( dut, [
+    'inst is_mul*',
+    [ 0b0000001_00011_00010_000_00001_0110011, 1 ], # MUL
+    [ 0b0000000_00011_00010_000_00001_0110011, 0 ], # ADD
+    [ 0b0100000_00011_00010_000_00001_0110011, 0 ], # SUB
   ], cmdline_opts )

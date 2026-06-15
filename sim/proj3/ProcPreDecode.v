@@ -16,7 +16,8 @@ module proj3_ProcPreDecode (
   output logic        rs2_valid,
   output logic        rd_valid,
   output logic        is_csr,
-  output logic        is_mem
+  output logic        is_mem,
+  output logic        is_mul
 );
 
   //----------------------------------------------------------------------
@@ -110,6 +111,11 @@ module proj3_ProcPreDecode (
   // The IQ uses is_mem to enforce in-order issue between mem instructions
   // and to apply in-flight=1 backpressure through mem_pipe_busy.
   assign is_mem = (inst[6:0] == 7'b0000011) || (inst[6:0] == 7'b0100011);
+
+  // RV32M MUL: funct7=0000001, funct3=000, opcode=0110011.
+  assign is_mul = (inst[31:25] == 7'b0000001)
+               && (inst[14:12] == 3'b000)
+               && (inst[6:0]   == 7'b0110011);
 
 endmodule
 

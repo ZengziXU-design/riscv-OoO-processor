@@ -231,30 +231,39 @@ module proj3_ProcOoO
   logic        reg_en_F;
   logic        reg_en_D;
   logic        iq_input_val_D;
-  logic        iq_dispatch_rdy;
 
   // ROB allocation control (ctrl -> dpath)
   logic        rob_alloc_req_D;
-  logic [2:0]  imm_type_I;
-  logic [1:0]  op2_sel_I;
-  logic [1:0]  csrr_sel_I;
-  logic        alu_issue_fire_I;
+  logic        alu0_dispatch_rdy;
+  logic        alu1_dispatch_rdy;
+  logic        mul_dispatch_rdy;
+  logic        mem_dispatch_rdy;
+
+  logic [2:0]  alu0_imm_type_I;
+  logic [1:0]  alu0_op2_sel_I;
+  logic [1:0]  alu0_csrr_sel_I;
+  logic        alu0_issue_fire_I;
+
+  logic [2:0]  alu1_imm_type_I;
+  logic [1:0]  alu1_op2_sel_I;
+  logic        alu1_issue_fire_I;
+
   logic        mul_issue_fire_I;
   logic        mem_issue_fire_I;
-  logic        is_sw_I;
+  logic [2:0]  mem_imm_type_I;
+  logic        mem_is_sw_I;
 
-  logic [3:0]  alu_fn_X;
+  logic [3:0]  alu0_fn_X;
+  logic [3:0]  alu1_fn_X;
 
   logic        imul_ostream_rdy_W;
 
-  logic [4:0]  rf_waddr_W;
-  logic        rf_wen_W;
-
-  logic        rob_fill_val_W;
-  logic        rob_fill_val_Y3;
-
-  logic [4:0]  rf_waddr_Y3;
-  logic        rf_wen_Y3;
+  logic        rf_wen_alu0_W;
+  logic        rf_wen_alu1_W;
+  logic        rf_wen_mul_Y3;
+  logic        rob_fill_val_alu0_W;
+  logic        rob_fill_val_alu1_W;
+  logic        rob_fill_val_mul_Y3;
 
   logic        stats_en_wen_W;
   
@@ -264,6 +273,14 @@ module proj3_ProcOoO
   logic        iq_input_rdy_D;
   logic        iq_dispatch_val;
   logic [31:0] iq_dispatch_inst;
+  logic        alu0_dispatch_val;
+  logic [31:0] alu0_dispatch_inst;
+  logic        alu1_dispatch_val;
+  logic [31:0] alu1_dispatch_inst;
+  logic        mul_dispatch_val;
+  logic [31:0] mul_dispatch_inst;
+  logic        mem_dispatch_val;
+  logic [31:0] mem_dispatch_inst;
   
   // ROB / Rename status feedback
   logic        rob_alloc_rdy_D;
@@ -322,25 +339,36 @@ module proj3_ProcOoO
     .reg_en_F                (reg_en_F),
     .reg_en_D                (reg_en_D),
     .iq_input_val_D          (iq_input_val_D),
-    .iq_dispatch_rdy         (iq_dispatch_rdy),
     .rob_alloc_req_D         (rob_alloc_req_D),
 
-    .imm_type_I              (imm_type_I),
-    .op2_sel_I               (op2_sel_I),
-    .csrr_sel_I              (csrr_sel_I),
-    .alu_issue_fire_I        (alu_issue_fire_I),
+    .alu0_dispatch_rdy       (alu0_dispatch_rdy),
+    .alu1_dispatch_rdy       (alu1_dispatch_rdy),
+    .mul_dispatch_rdy        (mul_dispatch_rdy),
+    .mem_dispatch_rdy        (mem_dispatch_rdy),
+
+    .alu0_imm_type_I         (alu0_imm_type_I),
+    .alu0_op2_sel_I          (alu0_op2_sel_I),
+    .alu0_csrr_sel_I         (alu0_csrr_sel_I),
+    .alu0_issue_fire_I       (alu0_issue_fire_I),
+
+    .alu1_imm_type_I         (alu1_imm_type_I),
+    .alu1_op2_sel_I          (alu1_op2_sel_I),
+    .alu1_issue_fire_I       (alu1_issue_fire_I),
+
     .mul_issue_fire_I        (mul_issue_fire_I),
     .mem_issue_fire_I        (mem_issue_fire_I),
-    .is_sw_I                 (is_sw_I),
+    .mem_imm_type_I          (mem_imm_type_I),
+    .mem_is_sw_I             (mem_is_sw_I),
 
-    .alu_fn_X                (alu_fn_X),
+    .alu0_fn_X               (alu0_fn_X),
+    .alu1_fn_X               (alu1_fn_X),
 
-    .rf_waddr_W              (rf_waddr_W),
-    .rf_wen_W                (rf_wen_W),
-    .rf_waddr_Y3             (rf_waddr_Y3),
-    .rf_wen_Y3               (rf_wen_Y3),
-    .rob_fill_val_W          (rob_fill_val_W),
-    .rob_fill_val_Y3         (rob_fill_val_Y3),
+    .rf_wen_alu0_W           (rf_wen_alu0_W),
+    .rf_wen_alu1_W           (rf_wen_alu1_W),
+    .rf_wen_mul_Y3           (rf_wen_mul_Y3),
+    .rob_fill_val_alu0_W     (rob_fill_val_alu0_W),
+    .rob_fill_val_alu1_W     (rob_fill_val_alu1_W),
+    .rob_fill_val_mul_Y3     (rob_fill_val_mul_Y3),
 
     .imul_ostream_rdy_W      (imul_ostream_rdy_W),
     .stats_en_wen_W          (stats_en_wen_W),
@@ -353,8 +381,14 @@ module proj3_ProcOoO
     .rob_full_D              (rob_full_D),
     .rename_rdy_D            (rename_rdy_D),
 
-    .iq_dispatch_val         (iq_dispatch_val),
-    .iq_dispatch_inst        (iq_dispatch_inst),
+    .alu0_dispatch_val       (alu0_dispatch_val),
+    .alu0_dispatch_inst      (alu0_dispatch_inst),
+    .alu1_dispatch_val       (alu1_dispatch_val),
+    .alu1_dispatch_inst      (alu1_dispatch_inst),
+    .mul_dispatch_val        (mul_dispatch_val),
+    .mul_dispatch_inst       (mul_dispatch_inst),
+    .mem_dispatch_val        (mem_dispatch_val),
+    .mem_dispatch_inst       (mem_dispatch_inst),
     .imul_istream_rdy_I      (imul_istream_rdy_I),
     .imul_ostream_val_W      (imul_ostream_val_W),
     .load_istream_rdy_I      (load_istream_rdy_I),
@@ -406,25 +440,36 @@ module proj3_ProcOoO
     .reg_en_F                 (reg_en_F),
     .reg_en_D                 (reg_en_D),
     .iq_input_val_D           (iq_input_val_D),
-    .iq_dispatch_rdy          (iq_dispatch_rdy),
     .rob_alloc_req_D          (rob_alloc_req_D),
 
-    .imm_type_I               (imm_type_I),
-    .op2_sel_I                (op2_sel_I),
-    .csrr_sel_I               (csrr_sel_I),
-    .alu_issue_fire_I         (alu_issue_fire_I),
+    .alu0_dispatch_rdy        (alu0_dispatch_rdy),
+    .alu1_dispatch_rdy        (alu1_dispatch_rdy),
+    .mul_dispatch_rdy         (mul_dispatch_rdy),
+    .mem_dispatch_rdy         (mem_dispatch_rdy),
+
+    .alu0_imm_type_I          (alu0_imm_type_I),
+    .alu0_op2_sel_I           (alu0_op2_sel_I),
+    .alu0_csrr_sel_I          (alu0_csrr_sel_I),
+    .alu0_issue_fire_I        (alu0_issue_fire_I),
+
+    .alu1_imm_type_I          (alu1_imm_type_I),
+    .alu1_op2_sel_I           (alu1_op2_sel_I),
+    .alu1_issue_fire_I        (alu1_issue_fire_I),
+
     .mul_issue_fire_I         (mul_issue_fire_I),
     .mem_issue_fire_I         (mem_issue_fire_I),
-    .is_sw_I                  (is_sw_I),
+    .mem_imm_type_I           (mem_imm_type_I),
+    .mem_is_sw_I              (mem_is_sw_I),
 
-    .alu_fn_X                 (alu_fn_X),
+    .alu0_fn_X                (alu0_fn_X),
+    .alu1_fn_X                (alu1_fn_X),
 
-    .rf_waddr_W               (rf_waddr_W),
-    .rf_wen_W                 (rf_wen_W),
-    .rf_waddr_Y3              (rf_waddr_Y3),
-    .rf_wen_Y3                (rf_wen_Y3),
-    .rob_fill_val_W           (rob_fill_val_W),
-    .rob_fill_val_Y3          (rob_fill_val_Y3),
+    .rf_wen_alu0_W            (rf_wen_alu0_W),
+    .rf_wen_alu1_W            (rf_wen_alu1_W),
+    .rf_wen_mul_Y3            (rf_wen_mul_Y3),
+    .rob_fill_val_alu0_W      (rob_fill_val_alu0_W),
+    .rob_fill_val_alu1_W      (rob_fill_val_alu1_W),
+    .rob_fill_val_mul_Y3      (rob_fill_val_mul_Y3),
 
     .imul_ostream_rdy_W       (imul_ostream_rdy_W),
     .stats_en_wen_W           (stats_en_wen_W),
@@ -433,6 +478,14 @@ module proj3_ProcOoO
     .inst_D_lane0             (inst_D_lane0),
     .inst_D_lane1             (inst_D_lane1),
     .iq_input_rdy_D           (iq_input_rdy_D),
+    .alu0_dispatch_val        (alu0_dispatch_val),
+    .alu0_dispatch_inst       (alu0_dispatch_inst),
+    .alu1_dispatch_val        (alu1_dispatch_val),
+    .alu1_dispatch_inst       (alu1_dispatch_inst),
+    .mul_dispatch_val         (mul_dispatch_val),
+    .mul_dispatch_inst        (mul_dispatch_inst),
+    .mem_dispatch_val         (mem_dispatch_val),
+    .mem_dispatch_inst        (mem_dispatch_inst),
     .iq_dispatch_val          (iq_dispatch_val),
     .iq_dispatch_inst         (iq_dispatch_inst),
 
@@ -515,21 +568,24 @@ module proj3_ProcOoO
       end
       vc_trace.append_str( trace_str, "|" );
       
-      // 4. WB event (writeback to PRF from ALU or MUL)
+      // 4. WB event (writeback to PRF)
 
-      if ( dpath.rf_wen_W || dpath.rf_wen_Y3 || dpath.load_prf_wen )
+      if ( dpath.rf_wen_alu0_W || dpath.rf_wen_alu1_W
+        || dpath.rf_wen_mul_Y3 || dpath.load_prf_wen )
         vc_trace.append_str( trace_str,
-          {3888'b0, ooo_trace.wb_preg_trace(
-            dpath.rf_wen_W,
-            dpath.rd_paddr_X,
-            dpath.rf_wen_Y3,
+          {3864'b0, ooo_trace.wb_preg_trace(
+            dpath.rf_wen_alu0_W,
+            dpath.rd_paddr_alu0_X,
+            dpath.rf_wen_alu1_W,
+            dpath.rd_paddr_alu1_X,
+            dpath.rf_wen_mul_Y3,
             dpath.rd_paddr_Y3,
             dpath.load_prf_wen,
             dpath.load_ostream_rd_paddr
           )}
         );
       else
-        vc_trace.append_chars( trace_str, " ", 22 );
+        vc_trace.append_chars( trace_str, " ", 29 );
         
       vc_trace.append_str( trace_str, "|" );
 

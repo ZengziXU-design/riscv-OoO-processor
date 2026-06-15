@@ -168,49 +168,51 @@ module proj3_OoO_linetrace_InstTasks();
     reg [3*8-1:0] wb0_str;
     reg [3*8-1:0] wb1_str;
     reg [3*8-1:0] wb2_str;
+    reg [3*8-1:0] wb3_str;
 
-    function [26*8-1:0] wb_preg_trace
+    function [29*8-1:0] wb_preg_trace
     (
       input logic       wen0,
       input logic [5:0] addr0,
       input logic       wen1,
       input logic [5:0] addr1,
       input logic       wen2,
-      input logic [5:0] addr2
+      input logic [5:0] addr2,
+      input logic       wen3,
+      input logic [5:0] addr3
     );
     begin
 
-      if ( addr0 <= 9 )
+      if ( !wen0 )
+        $sformat( wb0_str, "---" );
+      else if ( addr0 <= 9 )
         $sformat( wb0_str, "p0%0d", addr0 );
       else
         $sformat( wb0_str, "p%0d",  addr0 );
 
-      if ( addr1 <= 9 )
+      if ( !wen1 )
+        $sformat( wb1_str, "---" );
+      else if ( addr1 <= 9 )
         $sformat( wb1_str, "p0%0d", addr1 );
       else
         $sformat( wb1_str, "p%0d",  addr1 );
 
-      if ( addr2 <= 9 )
+      if ( !wen2 )
+        $sformat( wb2_str, "---" );
+      else if ( addr2 <= 9 )
         $sformat( wb2_str, "p0%0d", addr2 );
       else
         $sformat( wb2_str, "p%0d",  addr2 );
 
-      if ( wen0 && wen1 && wen2 )
-        $sformat( wb_preg_trace, "alu:%s mul:%s lw:%s", wb0_str, wb1_str, wb2_str );
-      else if ( wen0 && wen1 )
-        $sformat( wb_preg_trace, "alu:%s mul:%s       ", wb0_str, wb1_str );
-      else if ( wen0 && wen2 )
-        $sformat( wb_preg_trace, "alu:%s        lw:%s ", wb0_str, wb2_str );
-      else if ( wen1 && wen2 )
-        $sformat( wb_preg_trace, "       mul:%s lw:%s ", wb1_str, wb2_str );
-      else if ( wen0 )
-        $sformat( wb_preg_trace, "alu:%s               ", wb0_str );
-      else if ( wen1 )
-        $sformat( wb_preg_trace, "       mul:%s        ", wb1_str );
-      else if ( wen2 )
-        $sformat( wb_preg_trace, "               lw:%s ", wb2_str );
+      if ( !wen3 )
+        $sformat( wb3_str, "---" );
+      else if ( addr3 <= 9 )
+        $sformat( wb3_str, "p0%0d", addr3 );
       else
-        $sformat( wb_preg_trace, "                        " );
+        $sformat( wb3_str, "p%0d",  addr3 );
+
+      $sformat( wb_preg_trace, "a0:%s a1:%s mul:%s mem:%s",
+                wb0_str, wb1_str, wb2_str, wb3_str );
 
     end
     endfunction
