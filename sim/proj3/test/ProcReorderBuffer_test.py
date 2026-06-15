@@ -12,164 +12,200 @@ TEST_FMT = (
   'wb_req_alu0 wb_tag_alu0 wb_req_alu1 wb_tag_alu1 '
   'wb_req_mul wb_tag_mul wb_req_mem wb_tag_mem '
   'alloc_tag_lane0* alloc_tag_lane1* rob_alloc_rdy_D* rob_full* '
-  'commit_val* commit_has_rd* commit_rd_addr* commit_rd_paddr_old*'
+  'commit_val_lane0* commit_has_rd_lane0* commit_rd_addr_lane0* commit_rd_paddr_old_lane0* '
+  'commit_val_lane1* commit_has_rd_lane1* commit_rd_addr_lane1* commit_rd_paddr_old_lane1*'
 )
 
 #-------------------------------------------------------------------------
-# dual allocate, dual ALU complete, single in-order commit
+# Two adjacent ready entries commit together
 #-------------------------------------------------------------------------
 
-def test_dual_allocate_in_order_commit( cmdline_opts ):
+def test_dual_allocate_dual_commit( cmdline_opts ):
   dut = ProcReorderBuffer()
 
   run_test_vector_sim( dut, [
     TEST_FMT,
 
-    # Allocate two instructions into tags 0 and 1.
+    # Allocate tags 0 and 1.
     [ 1, 1, 1, 10,  1, 1, 2, 11,
       0, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 1, 0,  0, '?', '?', '?' ],
+      0, 1, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Both complete in the same cycle through ALU0/ALU1.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # Complete both entries. Completion is visible on the next cycle.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       1, 0,  1, 1,  0, 0,  0, 0,
-      '?', '?', 1, 0,  0, '?', '?', '?' ],
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Commit remains single-wide: tag 0 first.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # Both retire in order in the same cycle.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 1, 10 ],
+      '?', '?', 1, 0,
+      1, 1, 1, 10,  1, 1, 2, 11 ],
 
-    # Then tag 1.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # ROB is empty after the dual commit.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 2, 11 ],
-
-    # Empty.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
-      0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  0, '?', '?', '?' ],
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
   ], cmdline_opts )
 
 #-------------------------------------------------------------------------
-# memory complete port and no-rd store metadata
+# Younger ready entry cannot commit around an older pending entry
 #-------------------------------------------------------------------------
 
-def test_mem_complete_load_store_pair( cmdline_opts ):
+def test_lane1_cannot_bypass_lane0( cmdline_opts ):
   dut = ProcReorderBuffer()
 
   run_test_vector_sim( dut, [
     TEST_FMT,
 
-    # tag0 = lw x5 old p30, tag1 = sw with no rd.
     [ 1, 1, 5, 30,  1, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 1, 0,  0, '?', '?', '?' ],
+      0, 1, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Store completes first through MEM, but tag0 is still pending.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # Complete only the younger store at tag 1.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  1, 1,
-      '?', '?', 1, 0,  0, '?', '?', '?' ],
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Load completes later through MEM.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # The ready younger entry cannot retire by itself.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
+      0, 0,  0, 0,  0, 0,  0, 0,
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
+
+    # Complete the older load at tag 0.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  1, 0,
-      '?', '?', 1, 0,  0, '?', '?', '?' ],
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Load commits first and returns old p30.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    # Both now retire together; lane1 carries no destination metadata.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 5, 30 ],
-
-    # Store commits next with has_rd=0.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
-      0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 0, 0, 0 ],
+      '?', '?', 1, 0,
+      1, 1, 5, 30,  1, 0, 0, 0 ],
   ], cmdline_opts )
 
 #-------------------------------------------------------------------------
-# all four complete ports can clear entries in the same cycle
+# A single ready head still commits when the next entry is pending
 #-------------------------------------------------------------------------
 
-def test_four_complete_ports( cmdline_opts ):
+def test_single_commit_when_second_entry_pending( cmdline_opts ):
   dut = ProcReorderBuffer()
 
   run_test_vector_sim( dut, [
     TEST_FMT,
 
-    # Allocate tags 0/1, then 2/3.
+    [ 1, 1, 3, 20,  1, 1, 4, 21,
+      0, 0,  0, 0,  0, 0,  0, 0,
+      0, 1, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
+
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
+      1, 0,  0, 0,  0, 0,  0, 0,
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
+
+    # Only tag 0 is ready, so exactly one instruction retires.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
+      0, 0,  0, 0,  0, 0,  0, 0,
+      '?', '?', 1, 0,
+      1, 1, 3, 20,  0, '?', '?', '?' ],
+
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
+      0, 0,  1, 1,  0, 0,  0, 0,
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
+
+    # The former lane1 entry is now the oldest and retires on lane0.
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
+      0, 0,  0, 0,  0, 0,  0, 0,
+      '?', '?', 1, 0,
+      1, 1, 4, 21,  0, '?', '?', '?' ],
+  ], cmdline_opts )
+
+#-------------------------------------------------------------------------
+# Four completion ports can make four entries ready for two-cycle retire
+#-------------------------------------------------------------------------
+
+def test_four_complete_ports_two_wide_commit( cmdline_opts ):
+  dut = ProcReorderBuffer()
+
+  run_test_vector_sim( dut, [
+    TEST_FMT,
+
     [ 1, 1, 10, 20,  1, 1, 11, 21,
       0, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 1, 0,  0, '?', '?', '?' ],
+      0, 1, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
     [ 1, 1, 12, 22,  1, 1, 13, 23,
       0, 0,  0, 0,  0, 0,  0, 0,
-      2, 3, 1, 0,  0, '?', '?', '?' ],
+      2, 3, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Complete all four entries through distinct FU ports.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       1, 0,  1, 1,  1, 2,  1, 3,
-      '?', '?', 1, 0,  0, '?', '?', '?' ],
+      '?', '?', 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?' ],
 
-    # Commit remains one entry per cycle.
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 10, 20 ],
+      '?', '?', 1, 0,
+      1, 1, 10, 20,  1, 1, 11, 21 ],
 
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
+    [ 0, 0, 0, 0,  0, 0, 0, 0,
       0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 11, 21 ],
-
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
-      0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 12, 22 ],
-
-    [ 0, 0, 0, 0,   0, 0, 0, 0,
-      0, 0,  0, 0,  0, 0,  0, 0,
-      '?', '?', 1, 0,  1, 1, 13, 23 ],
+      '?', '?', 1, 0,
+      1, 1, 12, 22,  1, 1, 13, 23 ],
   ], cmdline_opts )
 
 #-------------------------------------------------------------------------
-# 16-entry capacity and atomic two-wide allocate readiness
+# Full ROB regains two free entries after a dual commit
 #-------------------------------------------------------------------------
 
-def test_dual_allocate_capacity_16_entries( cmdline_opts ):
+def test_capacity_recovers_after_dual_commit( cmdline_opts ):
   dut = ProcReorderBuffer()
+  vectors = [ TEST_FMT ]
 
-  run_test_vector_sim( dut, [
-    TEST_FMT,
+  # Fill all sixteen entries with eight atomic dual allocations.
+  for pair in range( 8 ):
+    tag0 = pair * 2
+    tag1 = tag0 + 1
+    vectors.append([
+      1, 1, tag0 + 1, tag0 + 1,  1, 1, tag1 + 1, tag1 + 1,
+      0, 0,  0, 0,  0, 0,  0, 0,
+      tag0, tag1, 1, 0,
+      0, '?', '?', '?',  0, '?', '?', '?'
+    ])
 
-    # Fill all sixteen entries with eight dual-allocate cycles.
-    [ 1, 1,  1,  1,  1, 1,  2,  2,  0, 0,  0, 0,  0, 0,  0, 0,
-      0,  1, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1,  3,  3,  1, 1,  4,  4,  0, 0,  0, 0,  0, 0,  0, 0,
-      2,  3, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1,  5,  5,  1, 1,  6,  6,  0, 0,  0, 0,  0, 0,  0, 0,
-      4,  5, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1,  7,  7,  1, 1,  8,  8,  0, 0,  0, 0,  0, 0,  0, 0,
-      6,  7, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1,  9,  9,  1, 1, 10, 10,  0, 0,  0, 0,  0, 0,  0, 0,
-      8,  9, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1, 11, 11,  1, 1, 12, 12,  0, 0,  0, 0,  0, 0,  0, 0,
-      10, 11, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1, 13, 13,  1, 1, 14, 14,  0, 0,  0, 0,  0, 0,  0, 0,
-      12, 13, 1, 0,  0, '?', '?', '?' ],
-    [ 1, 1, 15, 15,  1, 1, 16, 16,  0, 0,  0, 0,  0, 0,  0, 0,
-      14, 15, 1, 0,  0, '?', '?', '?' ],
+  # Full ROB cannot accept another atomic pair. Complete both head entries.
+  vectors.append([
+    1, 1, 17, 17,  1, 1, 18, 18,
+    1, 0,  1, 1,  0, 0,  0, 0,
+    0, 1, 0, 1,
+    0, '?', '?', '?',  0, '?', '?', '?'
+  ])
 
-    # Full: dual allocate is not ready. Complete head tag 0 through ALU0.
-    [ 1, 1, 17, 17,  1, 1, 18, 18,  1, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 0, 1,  0, '?', '?', '?' ],
+  # Commit uses the current entries, so allocate readiness remains conservative.
+  vectors.append([
+    1, 1, 17, 17,  1, 1, 18, 18,
+    0, 0,  0, 0,  0, 0,  0, 0,
+    0, 1, 0, 1,
+    1, 1, 1, 1,  1, 1, 2, 2
+  ])
 
-    # tag0 commits this cycle, but current-cycle free count is still 0.
-    [ 1, 1, 17, 17,  1, 1, 18, 18,  0, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 0, 1,  1, 1, 1, 1 ],
+  # On the next cycle two slots are free and atomic allocation is ready again.
+  vectors.append([
+    1, 1, 17, 17,  1, 1, 18, 18,
+    0, 0,  0, 0,  0, 0,  0, 0,
+    0, 1, 1, 0,
+    0, '?', '?', '?',  0, '?', '?', '?'
+  ])
 
-    # Now there is one free entry. Atomic fetch2/dispatch2 still cannot alloc.
-    [ 1, 1, 17, 17,  1, 1, 18, 18,  0, 0,  0, 0,  0, 0,  0, 0,
-      0, 1, 0, 0,  0, '?', '?', '?' ],
-
-    # One free entry is still not enough even with only one alloc_req bit set.
-    [ 1, 1, 17, 17,  0, 0,  0,  0,  0, 0,  0, 0,  0, 0,  0, 0,
-      0, '?', 0, 0,  0, '?', '?', '?' ],
-  ], cmdline_opts )
+  run_test_vector_sim( dut, vectors, cmdline_opts )

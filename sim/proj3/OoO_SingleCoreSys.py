@@ -20,6 +20,7 @@ class OoO_SingleCoreSys( VerilogPlaceholder, Component ):
 
     s.stats_en      = OutPort()
     s.commit_inst   = OutPort()
+    s.commit_count  = OutPort( Bits2 )
     s.icache_access = OutPort()
     s.icache_miss   = OutPort()
     s.dcache_access = OutPort()

@@ -57,6 +57,7 @@ module proj3_OoO_SingleCoreSys
 
   output logic          stats_en,
   output logic          commit_inst,
+  output logic [1:0]    commit_count,
   output logic          icache_access,
   output logic          icache_miss,
   output logic          dcache_access,
@@ -198,6 +199,7 @@ module proj3_OoO_SingleCoreSys
 
     .core_id     ( 32'b0       ),
     .commit_inst ( commit_inst ),
+    .commit_count( commit_count),
     .stats_en    ( stats_en    )
   );
 

@@ -112,17 +112,14 @@ module proj3_ProcDpath
   output logic         mem_dispatch_val,
   output logic [31:0]  mem_dispatch_inst,
 
-  // Compatibility/debug view used by the current line trace.
-  output logic         iq_dispatch_val,
-  output logic [31:0]  iq_dispatch_inst,
-
   // D stage status
   output logic         rob_alloc_rdy_D,
   output logic         rob_full_D,
   output logic         rename_rdy_D,
 
   // ROB commit status
-  output logic         commit_val_C,
+  output logic         commit_val_C_lane0,
+  output logic         commit_val_C_lane1,
 
   output logic         imul_istream_rdy_I,
   output logic         imul_ostream_val_W,
@@ -247,8 +244,10 @@ module proj3_ProcDpath
   logic [c_preg_addr_nbits-1:0] rd_paddr_old_D_lane1;
   logic [c_preg_addr_nbits-1:0] rd_paddr_new_D_lane1;
 
-  logic                         commit_rd_valid_to_rename_C;
-  logic [c_preg_addr_nbits-1:0] commit_rd_paddr_old_C;
+  logic                         commit_rd_valid_to_rename_C_lane0;
+  logic [c_preg_addr_nbits-1:0] commit_rd_paddr_old_C_lane0;
+  logic                         commit_rd_valid_to_rename_C_lane1;
+  logic [c_preg_addr_nbits-1:0] commit_rd_paddr_old_C_lane1;
 
   proj3_ProcRenameUnit #(
     .p_preg_addr_nbits (c_preg_addr_nbits)
@@ -294,8 +293,10 @@ module proj3_ProcDpath
     .rd_paddr_old_D_lane1     (rd_paddr_old_D_lane1),
     .rd_paddr_new_D_lane1     (rd_paddr_new_D_lane1),
 
-    .commit_rd_valid_C      (commit_rd_valid_to_rename_C),
-    .commit_rd_paddr_old_C  (commit_rd_paddr_old_C)
+    .commit_rd_valid_C_lane0     (commit_rd_valid_to_rename_C_lane0),
+    .commit_rd_paddr_old_C_lane0 (commit_rd_paddr_old_C_lane0),
+    .commit_rd_valid_C_lane1     (commit_rd_valid_to_rename_C_lane1),
+    .commit_rd_paddr_old_C_lane1 (commit_rd_paddr_old_C_lane1)
   );
 
   //--------------------------------------------------------------------
@@ -308,12 +309,15 @@ module proj3_ProcDpath
   logic [c_rob_tag_nbits-1:0] rob_tag_alu1_X;
   logic [c_rob_tag_nbits-1:0] rob_tag_Y3;
 
-  logic        commit_val;
-  logic        commit_has_rd;
-  logic [4:0]  commit_rd_addr;
-  
-  assign commit_val_C                 = commit_val;
-  assign commit_rd_valid_to_rename_C  = commit_val && commit_has_rd;
+  logic        commit_has_rd_lane0;
+  logic [4:0]  commit_rd_addr_lane0;
+  logic        commit_has_rd_lane1;
+  logic [4:0]  commit_rd_addr_lane1;
+
+  assign commit_rd_valid_to_rename_C_lane0
+    = commit_val_C_lane0 && commit_has_rd_lane0;
+  assign commit_rd_valid_to_rename_C_lane1
+    = commit_val_C_lane1 && commit_has_rd_lane1;
 
   //--------------------------------------------------------------------
   // Memory writeback wires
@@ -367,21 +371,20 @@ module proj3_ProcDpath
     .wb_req_mem         (load_wb_fire),
     .wb_tag_mem         (load_ostream_rob_idx),
 
-    .commit_val         (commit_val),
-    .commit_has_rd      (commit_has_rd),
-    .commit_rd_addr     (commit_rd_addr),
-    .commit_rd_paddr_old(commit_rd_paddr_old_C)
+    .commit_val_lane0          (commit_val_C_lane0),
+    .commit_has_rd_lane0       (commit_has_rd_lane0),
+    .commit_rd_addr_lane0      (commit_rd_addr_lane0),
+    .commit_rd_paddr_old_lane0 (commit_rd_paddr_old_C_lane0),
+
+    .commit_val_lane1          (commit_val_C_lane1),
+    .commit_has_rd_lane1       (commit_has_rd_lane1),
+    .commit_rd_addr_lane1      (commit_rd_addr_lane1),
+    .commit_rd_paddr_old_lane1 (commit_rd_paddr_old_C_lane1)
   );
 
   //--------------------------------------------------------------------
   // Issue Queue
   //--------------------------------------------------------------------
-
-  logic [c_preg_addr_nbits-1:0] iq_dispatch_rs1_addr;
-  logic [c_preg_addr_nbits-1:0] iq_dispatch_rs2_addr;
-  logic [c_preg_addr_nbits-1:0] iq_dispatch_rd_addr;
-  logic                         iq_dispatch_rd_valid;
-  logic [c_rob_tag_nbits-1:0]   iq_dispatch_rob_tag;
 
   logic [c_rob_tag_nbits-1:0]   alu0_dispatch_rob_tag;
   logic [c_preg_addr_nbits-1:0] alu0_dispatch_rs1_addr;
@@ -497,54 +500,6 @@ module proj3_ProcDpath
     .rf_wen_mem    (load_prf_wen),
     .rf_waddr_mem  (load_ostream_rd_paddr)
   );
-
-  // Debug view for the existing single-instruction line trace.
-  always_comb begin
-    iq_dispatch_val      = 1'b0;
-    iq_dispatch_inst     = '0;
-    iq_dispatch_rob_tag  = '0;
-    iq_dispatch_rs1_addr = '0;
-    iq_dispatch_rs2_addr = '0;
-    iq_dispatch_rd_addr  = '0;
-    iq_dispatch_rd_valid = 1'b0;
-
-    if ( alu0_dispatch_val ) begin
-      iq_dispatch_val      = alu0_dispatch_val;
-      iq_dispatch_inst     = alu0_dispatch_inst;
-      iq_dispatch_rob_tag  = alu0_dispatch_rob_tag;
-      iq_dispatch_rs1_addr = alu0_dispatch_rs1_addr;
-      iq_dispatch_rs2_addr = alu0_dispatch_rs2_addr;
-      iq_dispatch_rd_addr  = alu0_dispatch_rd_addr;
-      iq_dispatch_rd_valid = alu0_dispatch_rd_valid;
-    end
-    else if ( alu1_dispatch_val ) begin
-      iq_dispatch_val      = alu1_dispatch_val;
-      iq_dispatch_inst     = alu1_dispatch_inst;
-      iq_dispatch_rob_tag  = alu1_dispatch_rob_tag;
-      iq_dispatch_rs1_addr = alu1_dispatch_rs1_addr;
-      iq_dispatch_rs2_addr = alu1_dispatch_rs2_addr;
-      iq_dispatch_rd_addr  = alu1_dispatch_rd_addr;
-      iq_dispatch_rd_valid = alu1_dispatch_rd_valid;
-    end
-    else if ( mul_dispatch_val ) begin
-      iq_dispatch_val      = mul_dispatch_val;
-      iq_dispatch_inst     = mul_dispatch_inst;
-      iq_dispatch_rob_tag  = mul_dispatch_rob_tag;
-      iq_dispatch_rs1_addr = mul_dispatch_rs1_addr;
-      iq_dispatch_rs2_addr = mul_dispatch_rs2_addr;
-      iq_dispatch_rd_addr  = mul_dispatch_rd_addr;
-      iq_dispatch_rd_valid = mul_dispatch_rd_valid;
-    end
-    else if ( mem_dispatch_val ) begin
-      iq_dispatch_val      = mem_dispatch_val;
-      iq_dispatch_inst     = mem_dispatch_inst;
-      iq_dispatch_rob_tag  = mem_dispatch_rob_tag;
-      iq_dispatch_rs1_addr = mem_dispatch_rs1_addr;
-      iq_dispatch_rs2_addr = mem_dispatch_rs2_addr;
-      iq_dispatch_rd_addr  = mem_dispatch_rd_addr;
-      iq_dispatch_rd_valid = mem_dispatch_rd_valid;
-    end
-  end
 
   //--------------------------------------------------------------------
   // Map the four dispatch channels onto two PRF read slots

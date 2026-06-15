@@ -13,7 +13,8 @@ TEST_FMT = (
   'rs1_valid_D_lane0 rs2_valid_D_lane0 rd_valid_D_lane0 '
   'rs1_addr_D_lane1 rs2_addr_D_lane1 rd_addr_D_lane1 '
   'rs1_valid_D_lane1 rs2_valid_D_lane1 rd_valid_D_lane1 '
-  'commit_rd_valid_C commit_rd_paddr_old_C '
+  'commit_rd_valid_C_lane0 commit_rd_paddr_old_C_lane0 '
+  'commit_rd_valid_C_lane1 commit_rd_paddr_old_C_lane1 '
   'rename_rdy_D* '
   'rs1_paddr_D_lane0* rs2_paddr_D_lane0* '
   'rs1_paddr_valid_D_lane0* rs2_paddr_valid_D_lane0* '
@@ -42,7 +43,7 @@ def test_rename_dual_lane_basic( cmdline_opts ):
     [ 0,
       1, 2, 3,   1, 1, 1,
       3, 4, 5,   1, 1, 1,
-      0, 0,
+      0, 0,  0, 0,
       1,
       1, 2,      1, 1,      1, 3, 32,
       32, 4,     1, 1,      1, 5, 33 ],
@@ -51,7 +52,7 @@ def test_rename_dual_lane_basic( cmdline_opts ):
     [ 1,
       1, 2, 3,   1, 1, 1,
       3, 4, 5,   1, 1, 1,
-      0, 0,
+      0, 0,  0, 0,
       1,
       1, 2,      1, 1,      1, 3, 32,
       32, 4,     1, 1,      1, 5, 33 ],
@@ -60,7 +61,7 @@ def test_rename_dual_lane_basic( cmdline_opts ):
     [ 1,
       3, 5, 0,   1, 1, 1,
       5, 0, 6,   1, 0, 1,
-      0, 0,
+      0, 0,  0, 0,
       1,
       32, 33,    1, 1,      0, 0, 34,
       33, 0,     1, 0,      1, 6, 34 ],
@@ -69,26 +70,35 @@ def test_rename_dual_lane_basic( cmdline_opts ):
     [ 1,
       0, 0, 7,   0, 0, 1,
       0, 0, 7,   0, 0, 1,
-      0, 0,
+      0, 0,  0, 0,
       1,
       0, 0,      0, 0,      1, 7, 35,
       0, 0,      0, 0,      1, 35, 36 ],
 
-    # Reclaim p3 at commit; it becomes visible on the next cycle.
+    # Reclaim p3 and p5 together; they become visible on the next cycle.
     [ 0,
       7, 0, 0,   1, 0, 0,
       0, 0, 0,   0, 0, 0,
-      1, 3,
+      1, 3,  1, 5,
       1,
       36, 0,     1, 0,      0, 0, 37,
       0, 0,      0, 0,      0, 0, 37 ],
 
-    # The reclaimed low-numbered preg p3 is allocated before p37.
+    # The two reclaimed low-numbered registers are allocated before p37.
     [ 1,
       0, 0, 0,   0, 0, 0,
       0, 0, 8,   0, 0, 1,
-      0, 0,
+      0, 0,  0, 0,
       1,
       0, 0,      0, 0,      0, 0, 3,
       0, 0,      0, 0,      1, 8, 3 ],
+
+    # p5 remains free and is selected next.
+    [ 1,
+      0, 0, 0,   0, 0, 0,
+      0, 0, 9,   0, 0, 1,
+      0, 0,  0, 0,
+      1,
+      0, 0,      0, 0,      0, 0, 5,
+      0, 0,      0, 0,      1, 9, 5 ],
   ], cmdline_opts )

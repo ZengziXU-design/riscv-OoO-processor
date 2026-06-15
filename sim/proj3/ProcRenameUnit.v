@@ -65,8 +65,10 @@ module proj3_ProcRenameUnit #(
   // --------------------------------------------------
   // Commit feedback from ROB
   // --------------------------------------------------
-  input  logic                         commit_rd_valid_C,
-  input  logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old_C
+  input  logic                         commit_rd_valid_C_lane0,
+  input  logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old_C_lane0,
+  input  logic                         commit_rd_valid_C_lane1,
+  input  logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old_C_lane1
 );
 
   localparam int c_num_arch_regs = 32;
@@ -205,8 +207,12 @@ module proj3_ProcRenameUnit #(
       // ----------------------------------------------
       // Commit-stage free of old physical destination
       // ----------------------------------------------
-      if ( commit_rd_valid_C && ( commit_rd_paddr_old_C != '0 ) ) begin
-        freelist_free[commit_rd_paddr_old_C] <= 1'b1;
+      if ( commit_rd_valid_C_lane0 && ( commit_rd_paddr_old_C_lane0 != '0 ) ) begin
+        freelist_free[commit_rd_paddr_old_C_lane0] <= 1'b1;
+      end
+
+      if ( commit_rd_valid_C_lane1 && ( commit_rd_paddr_old_C_lane1 != '0 ) ) begin
+        freelist_free[commit_rd_paddr_old_C_lane1] <= 1'b1;
       end
 
       // ----------------------------------------------

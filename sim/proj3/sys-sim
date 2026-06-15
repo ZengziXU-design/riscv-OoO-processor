@@ -118,13 +118,19 @@ def parse_cmdline():
 # Helper functions
 #-------------------------------------------------------------------------
 
-def get_commit_inst( th ):
+def get_commit_count( th ):
+
+  if hasattr( th, "commit_count" ):
+    return int( th.commit_count )
+
+  if hasattr( th, "sys" ) and hasattr( th.sys, "commit_count" ):
+    return int( th.sys.commit_count )
 
   if hasattr( th, "commit_inst" ):
-    return th.commit_inst
+    return 1 if th.commit_inst else 0
 
   if hasattr( th, "sys" ) and hasattr( th.sys, "commit_inst" ):
-    return th.sys.commit_inst
+    return 1 if th.sys.commit_inst else 0
 
   return 0
 
@@ -315,8 +321,7 @@ def main():
 
     num_cycles += 1
 
-    if get_commit_inst( th ):
-      num_insts += 1
+    num_insts += get_commit_count( th )
 
     if get_icache_access( th ):
       num_icache_access += 1

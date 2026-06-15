@@ -55,7 +55,12 @@ class ProcReorderBuffer( VerilogPlaceholder, Component ):
     # --------------------------------------------------------------------
     # Commit Port
     # --------------------------------------------------------------------
-    s.commit_val          = OutPort( 1 )
-    s.commit_has_rd       = OutPort( 1 )
-    s.commit_rd_addr      = OutPort( 5 )
-    s.commit_rd_paddr_old = OutPort( p_preg_addr_nbits )
+    s.commit_val_lane0          = OutPort( 1 )
+    s.commit_has_rd_lane0       = OutPort( 1 )
+    s.commit_rd_addr_lane0      = OutPort( 5 )
+    s.commit_rd_paddr_old_lane0 = OutPort( p_preg_addr_nbits )
+
+    s.commit_val_lane1          = OutPort( 1 )
+    s.commit_has_rd_lane1       = OutPort( 1 )
+    s.commit_rd_addr_lane1      = OutPort( 5 )
+    s.commit_rd_paddr_old_lane1 = OutPort( p_preg_addr_nbits )

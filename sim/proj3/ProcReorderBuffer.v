@@ -5,7 +5,7 @@
 // ===> [Writeback] Wake up by Tag (pending=0) 
 // ===> [Commit] Verify and commit in order at Head -> Return old PRF to Rename.
 // --------------------------------------------------
-// Supports two-wide allocate, four completion ports, and single-wide commit.
+// Supports two-wide allocate, four completion ports, and two-wide commit.
 // ==================================================
 `ifndef PROC_REORDER_BUFFER_V
 `define PROC_REORDER_BUFFER_V
@@ -62,10 +62,15 @@ module proj3_ProcReorderBuffer #(
   //---------------------------------------------------------
   // Commit interface
   //---------------------------------------------------------
-  output logic                   commit_val,
-  output logic                   commit_has_rd,
-  output logic [4:0]             commit_rd_addr,        // architectural rd (kept for Line Trace / Debug)
-  output logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old
+  output logic                   commit_val_lane0,
+  output logic                   commit_has_rd_lane0,
+  output logic [4:0]             commit_rd_addr_lane0,
+  output logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old_lane0,
+
+  output logic                   commit_val_lane1,
+  output logic                   commit_has_rd_lane1,
+  output logic [4:0]             commit_rd_addr_lane1,
+  output logic [p_preg_addr_nbits-1:0] commit_rd_paddr_old_lane1
   
 );
 
@@ -81,7 +86,9 @@ module proj3_ProcReorderBuffer #(
     input logic [c_tag_nbits-1:0] ptr
   );
   begin
-    incr_ptr = ( ptr == p_num_entries - 1 ) ? '0 : ptr + 1'b1;
+    incr_ptr = ( ptr == c_tag_nbits'(p_num_entries - 1) )
+             ? '0
+             : ptr + 1'b1;
   end
   endfunction
 
@@ -104,12 +111,15 @@ module proj3_ProcReorderBuffer #(
 
   logic [c_tag_nbits-1:0]   tail_plus1;
   logic [c_tag_nbits-1:0]   tail_plus2;
+  logic [c_tag_nbits-1:0]   head_plus1;
+  logic [c_tag_nbits-1:0]   head_plus2;
   logic [c_tag_nbits-1:0]   alloc_slot_lane1;
   logic [c_count_nbits-1:0] num_free_entries;
 
   logic                     do_alloc_lane0;
   logic                     do_alloc_lane1;
   logic [1:0]               do_alloc_count;
+  logic [1:0]               commit_count;
 
   //----------------------------------------------------------------------
   // Combinational status logic
@@ -120,6 +130,8 @@ module proj3_ProcReorderBuffer #(
 
   assign tail_plus1 = incr_ptr( tail );
   assign tail_plus2 = incr_ptr( tail_plus1 );
+  assign head_plus1 = incr_ptr( head );
+  assign head_plus2 = incr_ptr( head_plus1 );
 
   assign alloc_slot_lane1 = alloc_req_lane0 ? tail_plus1 : tail;
 
@@ -141,10 +153,27 @@ module proj3_ProcReorderBuffer #(
   //----------------------------------------------------------------------
   // Commit logic
   //----------------------------------------------------------------------
-  assign commit_val          = !rob_empty && v_entry[head] && !pending[head];
-  assign commit_has_rd       = rd_valid[head];
-  assign commit_rd_addr      = rd_addr[head];
-  assign commit_rd_paddr_old = rd_paddr_old[head];
+  // Lane0 is always the oldest ROB entry. Lane1 can only commit when lane0
+  // commits in the same cycle, preserving in-order retirement.
+  assign commit_val_lane0 = !rob_empty
+                         && v_entry[head]
+                         && !pending[head];
+
+  assign commit_val_lane1 = commit_val_lane0
+                         && ( count >= c_count_nbits'(2) )
+                         && v_entry[head_plus1]
+                         && !pending[head_plus1];
+
+  assign commit_has_rd_lane0       = rd_valid[head];
+  assign commit_rd_addr_lane0      = rd_addr[head];
+  assign commit_rd_paddr_old_lane0 = rd_paddr_old[head];
+
+  assign commit_has_rd_lane1       = rd_valid[head_plus1];
+  assign commit_rd_addr_lane1      = rd_addr[head_plus1];
+  assign commit_rd_paddr_old_lane1 = rd_paddr_old[head_plus1];
+
+  assign commit_count = { 1'b0, commit_val_lane0 }
+                      + { 1'b0, commit_val_lane1 };
   
   //----------------------------------------------------------------------
   // Sequential state update
@@ -164,8 +193,9 @@ module proj3_ProcReorderBuffer #(
       end
     end
     else begin
-      // Counter update. Commit remains single-wide.
-      count <= count + do_alloc_count - { 1'b0, commit_val };
+      count <= count
+             + c_count_nbits'(do_alloc_count)
+             - c_count_nbits'(commit_count);
 
       // D-stage allocate
       if ( do_alloc_lane0 ) begin
@@ -191,10 +221,20 @@ module proj3_ProcReorderBuffer #(
         tail <= tail_plus1;
       end
 
-      // C-stage commit
-      if ( commit_val ) begin
-        head <= ( head == p_num_entries - 1 ) ? '0 : head + 1'b1;
+      // C-stage commit. Lane1 is younger than lane0 and never commits alone.
+      if ( commit_val_lane0 ) begin
         v_entry[head] <= 1'b0;
+      end
+
+      if ( commit_val_lane1 ) begin
+        v_entry[head_plus1] <= 1'b0;
+      end
+
+      if ( commit_count == 2'd2 ) begin
+        head <= head_plus2;
+      end
+      else if ( commit_count == 2'd1 ) begin
+        head <= head_plus1;
       end
 
       // Completion / writeback tag marks instruction ready

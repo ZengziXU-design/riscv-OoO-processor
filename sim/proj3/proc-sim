@@ -111,6 +111,16 @@ def parse_cmdline():
 # Main
 #-------------------------------------------------------------------------
 
+def get_commit_count( th ):
+
+  if hasattr( th, "proc" ) and hasattr( th.proc, "commit_count" ):
+    return int( th.proc.commit_count )
+
+  if hasattr( th, "commit_count" ):
+    return int( th.commit_count )
+
+  return 1 if th.commit_inst else 0
+
 def main():
   opts = parse_cmdline()
 
@@ -197,9 +207,8 @@ def main():
   while not th.done() and th.sim_cycle_count() < opts.max_cycles:
     th.sim_tick()
 
-    # count number of commited instructions
-    if th.commit_inst:
-      num_insts += 1
+    # Count retired instructions, including two-wide commit cycles.
+    num_insts += get_commit_count( th )
 
   # Force a test failure if we timed out
 
@@ -219,7 +228,7 @@ def main():
       exit(1)
 
   if opts.stats:
-    cpi = float(num_cycles) / float(num_insts)
+    cpi = float(num_cycles) / float(num_insts) if num_insts > 0 else 0.0
     print( " num_cycles = {}".format( num_cycles ) )
     print( " num_insts  = {}".format( num_insts ) )
     print( " CPI        = {:1.2f}".format( cpi ) )

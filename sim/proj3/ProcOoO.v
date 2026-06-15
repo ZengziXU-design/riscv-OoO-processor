@@ -54,6 +54,7 @@ module proj3_ProcOoO
 
   input  logic [31:0]  core_id,
   output logic         commit_inst,
+  output logic [1:0]   commit_count,
   output logic         stats_en
 );
 
@@ -271,8 +272,6 @@ module proj3_ProcOoO
   logic [31:0] inst_D_lane0;
   logic [31:0] inst_D_lane1;
   logic        iq_input_rdy_D;
-  logic        iq_dispatch_val;
-  logic [31:0] iq_dispatch_inst;
   logic        alu0_dispatch_val;
   logic [31:0] alu0_dispatch_inst;
   logic        alu1_dispatch_val;
@@ -288,10 +287,14 @@ module proj3_ProcOoO
   logic        rename_rdy_D;
 
   // ROB commit signal
-  logic        commit_val_C;
+  logic        commit_val_C_lane0;
+  logic        commit_val_C_lane1;
   logic        imul_istream_rdy_I;
   logic        imul_ostream_val_W;
   logic        load_istream_rdy_I;
+
+  assign commit_count = { 1'b0, commit_val_C_lane0 }
+                      + { 1'b0, commit_val_C_lane1 };
 
   // Dummy ctrl-side dmem val/rdy wires. The LoadUnit in dpath drives the
   // actual dmem request/response handshake.
@@ -393,7 +396,8 @@ module proj3_ProcOoO
     .imul_ostream_val_W      (imul_ostream_val_W),
     .load_istream_rdy_I      (load_istream_rdy_I),
 
-    .commit_val_C            (commit_val_C),
+    .commit_val_C_lane0      (commit_val_C_lane0),
+    .commit_val_C_lane1      (commit_val_C_lane1),
     .commit_inst             (commit_inst)
   );
 
@@ -486,13 +490,11 @@ module proj3_ProcOoO
     .mul_dispatch_inst        (mul_dispatch_inst),
     .mem_dispatch_val         (mem_dispatch_val),
     .mem_dispatch_inst        (mem_dispatch_inst),
-    .iq_dispatch_val          (iq_dispatch_val),
-    .iq_dispatch_inst         (iq_dispatch_inst),
-
     .rob_alloc_rdy_D          (rob_alloc_rdy_D),
     .rob_full_D               (rob_full_D),
     .rename_rdy_D             (rename_rdy_D),
-    .commit_val_C             (commit_val_C),
+    .commit_val_C_lane0       (commit_val_C_lane0),
+    .commit_val_C_lane1       (commit_val_C_lane1),
 
     .imul_istream_rdy_I       (imul_istream_rdy_I),
     .imul_ostream_val_W       (imul_ostream_val_W),
@@ -512,6 +514,21 @@ module proj3_ProcOoO
     proj3_tinyrv2_encoding_InstTasks tinyrv2();
     proj3_OoO_linetrace_InstTasks ooo_trace();
     logic [`VC_TRACE_NBITS-1:0] str;
+    logic issue_fire_trace_alu0;
+    logic issue_fire_trace_alu1;
+    logic issue_fire_trace_mul;
+    logic issue_fire_trace_mem;
+    logic [2:0] issue_trace_count;
+
+    assign issue_fire_trace_alu0 = alu0_dispatch_val && alu0_dispatch_rdy;
+    assign issue_fire_trace_alu1 = alu1_dispatch_val && alu1_dispatch_rdy;
+    assign issue_fire_trace_mul  = mul_dispatch_val  && mul_dispatch_rdy;
+    assign issue_fire_trace_mem  = mem_dispatch_val  && mem_dispatch_rdy;
+
+    assign issue_trace_count = { 2'b0, issue_fire_trace_alu0 }
+                             + { 2'b0, issue_fire_trace_alu1 }
+                             + { 2'b0, issue_fire_trace_mul  }
+                             + { 2'b0, issue_fire_trace_mem  };
     
     `VC_TRACE_BEGIN
     begin
@@ -525,7 +542,7 @@ module proj3_ProcOoO
         vc_trace.append_chars( trace_str, " ", 7 );
       end
       else begin
-        $sformat( str, "%x", dpath.pc_F );
+        $sformat( str, "%08x", dpath.pc_F );
         vc_trace.append_str( trace_str, str );
       end
       vc_trace.append_str( trace_str, "|" );
@@ -533,17 +550,17 @@ module proj3_ProcOoO
       // 2. D stage (Decode / Rename / Allocate)
 
       if ( !ctrl.val_D )
-        vc_trace.append_chars( trace_str, " ", 51 );
+        vc_trace.append_chars( trace_str, " ", 53 );
       else if ( ctrl.stall_D ) begin
         vc_trace.append_str( trace_str, "#" );
-        vc_trace.append_chars( trace_str, " ", 50 );
+        vc_trace.append_chars( trace_str, " ", 52 );
       end
       else begin
-        $sformat( str, "%0d:", dpath.alloc_tag_D_lane0 );
+        $sformat( str, "%02d:", dpath.alloc_tag_D_lane0 );
         vc_trace.append_str( trace_str, str );
         vc_trace.append_str( trace_str, {3896'b0, tinyrv2.disasm( inst_D_lane0 )} );
         vc_trace.append_str( trace_str, "," );
-        $sformat( str, "%0d:", dpath.alloc_tag_D_lane1 );
+        $sformat( str, "%02d:", dpath.alloc_tag_D_lane1 );
         vc_trace.append_str( trace_str, str );
         vc_trace.append_str( trace_str, {3896'b0, tinyrv2.disasm( inst_D_lane1 )} );
       end
@@ -552,19 +569,43 @@ module proj3_ProcOoO
 
       // 3. IS stage (Issue / IQ Dispatch)
 
-      if ( !iq_dispatch_val )
-        vc_trace.append_chars( trace_str, " ", 25 );
+      if ( issue_trace_count == 0 )
+        vc_trace.append_chars( trace_str, " ", 63 );
       else begin
-        $sformat( str, "%0d:", dpath.iq_dispatch_rob_tag );
-        vc_trace.append_str( trace_str, str );
         vc_trace.append_str( trace_str,
-          {3896'b0, ooo_trace.disasm_phy(
-            iq_dispatch_inst,
-            dpath.iq_dispatch_rs1_addr,
-            dpath.iq_dispatch_rs2_addr,
-            dpath.iq_dispatch_rd_addr
+          {3592'b0, ooo_trace.dual_issue_trace(
+            issue_fire_trace_alu0,
+            dpath.alu0_dispatch_rob_tag,
+            alu0_dispatch_inst,
+            dpath.alu0_dispatch_rs1_addr,
+            dpath.alu0_dispatch_rs2_addr,
+            dpath.alu0_dispatch_rd_addr,
+
+            issue_fire_trace_alu1,
+            dpath.alu1_dispatch_rob_tag,
+            alu1_dispatch_inst,
+            dpath.alu1_dispatch_rs1_addr,
+            dpath.alu1_dispatch_rs2_addr,
+            dpath.alu1_dispatch_rd_addr,
+
+            issue_fire_trace_mul,
+            dpath.mul_dispatch_rob_tag,
+            mul_dispatch_inst,
+            dpath.mul_dispatch_rs1_addr,
+            dpath.mul_dispatch_rs2_addr,
+            dpath.mul_dispatch_rd_addr,
+
+            issue_fire_trace_mem,
+            dpath.mem_dispatch_rob_tag,
+            mem_dispatch_inst,
+            dpath.mem_dispatch_rs1_addr,
+            dpath.mem_dispatch_rs2_addr,
+            dpath.mem_dispatch_rd_addr
           )}
         );
+
+        if ( issue_trace_count == 1 )
+          vc_trace.append_chars( trace_str, " ", 32 );
       end
       vc_trace.append_str( trace_str, "|" );
       
@@ -591,18 +632,33 @@ module proj3_ProcOoO
 
       // 5. C stage (Commit)
 
-      if ( commit_inst ) begin
+      if ( commit_val_C_lane0 ) begin
         vc_trace.append_str( trace_str,
-          {3728'b0, ooo_trace.commit_trace(
-            dpath.commit_has_rd,
+          {3928'b0, ooo_trace.commit_trace(
+            dpath.commit_has_rd_lane0,
             dpath.rob.head,
-            dpath.commit_rd_addr,
-            dpath.commit_rd_paddr_old_C
+            dpath.commit_rd_addr_lane0,
+            dpath.commit_rd_paddr_old_C_lane0
           )}
         );
+
+        if ( commit_val_C_lane1 ) begin
+          vc_trace.append_str( trace_str, "," );
+          vc_trace.append_str( trace_str,
+            {3928'b0, ooo_trace.commit_trace(
+              dpath.commit_has_rd_lane1,
+              dpath.rob.head_plus1,
+              dpath.commit_rd_addr_lane1,
+              dpath.commit_rd_paddr_old_C_lane1
+            )}
+          );
+        end
+        else begin
+          vc_trace.append_chars( trace_str, " ", 22 );
+        end
       end
       else begin
-        vc_trace.append_chars( trace_str, " ", 21 );
+        vc_trace.append_chars( trace_str, " ", 43 );
       end
 
     end

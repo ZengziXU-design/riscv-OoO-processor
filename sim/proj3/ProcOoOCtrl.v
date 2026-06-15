@@ -89,7 +89,8 @@ module proj3_ProcCtrl
   input  logic        imul_ostream_val_W,
   input  logic        load_istream_rdy_I,
 
-  input  logic        commit_val_C,
+  input  logic        commit_val_C_lane0,
+  input  logic        commit_val_C_lane1,
   output logic        commit_inst
 );
 
@@ -520,7 +521,7 @@ module proj3_ProcCtrl
     end
   end
 
-  assign commit_inst = commit_val_C;
+  assign commit_inst = commit_val_C_lane0 || commit_val_C_lane1;
 
 endmodule
 

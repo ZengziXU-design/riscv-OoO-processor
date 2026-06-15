@@ -115,6 +115,120 @@ module proj3_OoO_linetrace_InstTasks();
   end
   endfunction
 
+  //------------------------------------------------------------------------
+  // Fixed-width issue trace
+  //------------------------------------------------------------------------
+
+  reg [2*8-1:0]  issue_unit_str;
+  reg [31*8-1:0] issue_slot0_str;
+  reg [31*8-1:0] issue_slot1_str;
+
+  function [31*8-1:0] issue_trace
+  (
+    input logic [1:0] unit_sel,
+    input logic [3:0] rob_tag,
+    input logic [31:0] inst,
+    input logic [5:0] rs1_paddr,
+    input logic [5:0] rs2_paddr,
+    input logic [5:0] rd_paddr
+  );
+  begin
+    case ( unit_sel )
+      2'd0: $sformat( issue_unit_str, "a0" );
+      2'd1: $sformat( issue_unit_str, "a1" );
+      2'd2: $sformat( issue_unit_str, "mu" );
+      2'd3: $sformat( issue_unit_str, "me" );
+    endcase
+
+    $sformat( issue_trace, "%s:%02d:%s",
+      issue_unit_str,
+      rob_tag,
+      disasm_phy( inst, rs1_paddr, rs2_paddr, rd_paddr )
+    );
+  end
+  endfunction
+
+  function [63*8-1:0] dual_issue_trace
+  (
+    input logic        fire_alu0,
+    input logic [3:0]  tag_alu0,
+    input logic [31:0] inst_alu0,
+    input logic [5:0]  rs1_alu0,
+    input logic [5:0]  rs2_alu0,
+    input logic [5:0]  rd_alu0,
+
+    input logic        fire_alu1,
+    input logic [3:0]  tag_alu1,
+    input logic [31:0] inst_alu1,
+    input logic [5:0]  rs1_alu1,
+    input logic [5:0]  rs2_alu1,
+    input logic [5:0]  rd_alu1,
+
+    input logic        fire_mul,
+    input logic [3:0]  tag_mul,
+    input logic [31:0] inst_mul,
+    input logic [5:0]  rs1_mul,
+    input logic [5:0]  rs2_mul,
+    input logic [5:0]  rd_mul,
+
+    input logic        fire_mem,
+    input logic [3:0]  tag_mem,
+    input logic [31:0] inst_mem,
+    input logic [5:0]  rs1_mem,
+    input logic [5:0]  rs2_mem,
+    input logic [5:0]  rd_mem
+  );
+    integer issue_count;
+  begin
+    issue_count     = 0;
+    issue_slot0_str = '0;
+    issue_slot1_str = '0;
+
+    if ( fire_alu0 ) begin
+      issue_slot0_str = issue_trace( 2'd0, tag_alu0, inst_alu0,
+                                     rs1_alu0, rs2_alu0, rd_alu0 );
+      issue_count = 1;
+    end
+
+    if ( fire_alu1 ) begin
+      if ( issue_count == 0 )
+        issue_slot0_str = issue_trace( 2'd1, tag_alu1, inst_alu1,
+                                       rs1_alu1, rs2_alu1, rd_alu1 );
+      else
+        issue_slot1_str = issue_trace( 2'd1, tag_alu1, inst_alu1,
+                                       rs1_alu1, rs2_alu1, rd_alu1 );
+      issue_count = issue_count + 1;
+    end
+
+    if ( fire_mul && ( issue_count < 2 ) ) begin
+      if ( issue_count == 0 )
+        issue_slot0_str = issue_trace( 2'd2, tag_mul, inst_mul,
+                                       rs1_mul, rs2_mul, rd_mul );
+      else
+        issue_slot1_str = issue_trace( 2'd2, tag_mul, inst_mul,
+                                       rs1_mul, rs2_mul, rd_mul );
+      issue_count = issue_count + 1;
+    end
+
+    if ( fire_mem && ( issue_count < 2 ) ) begin
+      if ( issue_count == 0 )
+        issue_slot0_str = issue_trace( 2'd3, tag_mem, inst_mem,
+                                       rs1_mem, rs2_mem, rd_mem );
+      else
+        issue_slot1_str = issue_trace( 2'd3, tag_mem, inst_mem,
+                                       rs1_mem, rs2_mem, rd_mem );
+      issue_count = issue_count + 1;
+    end
+
+    if ( issue_count == 2 )
+      $sformat( dual_issue_trace, "%s,%s", issue_slot0_str, issue_slot1_str );
+    else if ( issue_count == 1 )
+      $sformat( dual_issue_trace, "%s", issue_slot0_str );
+    else
+      dual_issue_trace = '0;
+  end
+  endfunction
+
   //----------------------------------------------------------------------
   // Immediate decoding -- only outputs signals at the width required for
   // line tracing
@@ -235,7 +349,7 @@ function [21*8-1:0] commit_trace
 begin
 
   // ROB tag, 0-15
-  $sformat( c_rob_tag_str, "%0d", rob_tag );
+  $sformat( c_rob_tag_str, "%02d", rob_tag );
 
   // Old physical destination to free
   if ( old_paddr <= 9 )

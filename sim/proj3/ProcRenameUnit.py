@@ -44,5 +44,7 @@ class ProcRenameUnit( VerilogPlaceholder, Component ):
     s.rd_paddr_old_D_lane1  = OutPort( p_preg_addr_nbits )
     s.rd_paddr_new_D_lane1  = OutPort( p_preg_addr_nbits )
 
-    s.commit_rd_valid_C     = InPort ( 1 )
-    s.commit_rd_paddr_old_C = InPort ( p_preg_addr_nbits )
+    s.commit_rd_valid_C_lane0     = InPort ( 1 )
+    s.commit_rd_paddr_old_C_lane0 = InPort ( p_preg_addr_nbits )
+    s.commit_rd_valid_C_lane1     = InPort ( 1 )
+    s.commit_rd_paddr_old_C_lane1 = InPort ( p_preg_addr_nbits )

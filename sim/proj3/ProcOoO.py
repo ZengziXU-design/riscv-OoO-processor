@@ -27,4 +27,5 @@ class ProcOoO( VerilogPlaceholder, Component ):
 
     s.core_id     = InPort(32)
     s.commit_inst = OutPort()
+    s.commit_count = OutPort( Bits2 )
     s.stats_en    = OutPort()
