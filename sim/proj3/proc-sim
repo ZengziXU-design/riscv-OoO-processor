@@ -5,7 +5,7 @@
 #
 #  -h --help           Display this message
 #
-#  --impl              {fl,base,ooo}
+#  --impl              {ooo}
 #  --input dataset     {vvadd-unopt,vvadd-opt,cmult}
 #  --verify            Verify results
 #  --trace             Display line tracing
@@ -17,11 +17,8 @@
 #  --max-cycles        Set timeout num_cycles, default=15000
 #  --mem-delays        Turn on memory delays for testing
 #
-# Stage-1 evaluation harness for the OoO processor (no branch / jal
-# support yet). Only kernels whose loop bodies are independent enough
-# to be fully unrolled are exposed here: vvadd-unopt, vvadd-opt, cmult.
-# mfilt / bsearch require branches to express their algorithm and are
-# deferred until a later stage.
+# Evaluation harness for the dual-issue OoO processor. System/cache and
+# base-pipeline comparisons are intentionally out of scope for this branch.
 #
 # Author : Moyang Wang, Christopher Batten
 # Date   : September 21, 2022
@@ -50,8 +47,6 @@ from pymtl3 import *
 from pymtl3.stdlib.test_utils import config_model_with_cmdline_opts
 from pymtl3.passes.backends.verilog import *
 
-from proj3.ProcFL              import ProcFL
-from proj3.ProcBase            import ProcBase
 from proj3.ProcOoO             import ProcOoO
 
 from proj3.test.harness        import TestHarness
@@ -89,7 +84,7 @@ def parse_cmdline():
 
   # Additional commane line arguments for the simulator
 
-  p.add_argument( "--impl",  default="fl", choices=["fl","base","ooo"] )
+  p.add_argument( "--impl",  default="ooo", choices=["ooo"] )
   p.add_argument( "--input", default="vvadd-unopt",
     choices=["vvadd-unopt", "vvadd-opt", "cmult", "vmuladd2-unopt", "chacha20-unrolled", "dotprod-unopt-unrolled", "vvadd-sw-opt"] )
 
@@ -124,23 +119,9 @@ def get_commit_count( th ):
 def main():
   opts = parse_cmdline()
 
-  # Determine which model to use in the simulator
-
-  model_impl_dict = {
-    "fl"  : ProcFL,
-    "base": ProcBase,
-    "ooo" : ProcOoO,
-  }
-
-  # Check if translation is valid
-
-  if opts.translate and opts.impl == "fl":
-    print("\n ERROR: --translate only works with RTL models \n")
-    exit(1)
-
   # Create test harness (we can reuse the harness from unit testing)
 
-  th = TestHarness( model_impl_dict[ opts.impl ] )
+  th = TestHarness( ProcOoO )
 
   # Set the memory latency
 

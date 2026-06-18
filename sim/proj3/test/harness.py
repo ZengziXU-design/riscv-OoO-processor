@@ -10,11 +10,33 @@ from pymtl3 import *
 
 from pymtl3.stdlib.mem import MemoryFL, mk_mem_msg
 from pymtl3.stdlib.xcel import mk_xcel_msg
+from pymtl3.stdlib.xcel.ifcs import XcelResponderIfc
 from pymtl3.stdlib.stream import StreamSourceFL, StreamSinkFL
 from pymtl3.stdlib.test_utils import run_sim
 
 from proj3.tinyrv2_encoding import assemble
-from proj3.NullXcelFL import NullXcelFL
+
+#=========================================================================
+# Null accelerator sink
+#=========================================================================
+
+class NullXcelSink( Component ):
+
+  def construct( s ):
+
+    XcelReqMsg, XcelRespMsg = mk_xcel_msg( 5, 32 )
+
+    s.xcel = XcelResponderIfc( XcelReqMsg, XcelRespMsg )
+
+    @update
+    def up_null_xcel_sink():
+      s.xcel.reqstream.rdy       @= 0
+      s.xcel.respstream.val      @= 0
+      s.xcel.respstream.msg.type_ @= 0
+      s.xcel.respstream.msg.data  @= 0
+
+  def line_trace( s ):
+    return ""
 
 #=========================================================================
 # TestHarness
@@ -58,15 +80,12 @@ class TestHarness(Component):
     s.src  = StreamSourceFL( Bits32, [] )
     s.sink = StreamSinkFL( Bits32, [] )
     s.proc = ProcType()
-    s.xcel = NullXcelFL()
+    s.xcel = NullXcelSink()
 
-    if ProcType.__name__ == "ProcOoO":
-      s.mem = MemoryFL(2, mem_ifc_dtypes=[
-        mk_mem_msg(8,32,64),
-        mk_mem_msg(8,32,32),
-      ] )
-    else:
-      s.mem = MemoryFL(2, mem_ifc_dtypes=2*[mk_mem_msg(8,32,32)] )
+    s.mem = MemoryFL(2, mem_ifc_dtypes=[
+      mk_mem_msg(8,32,64),
+      mk_mem_msg(8,32,32),
+    ] )
 
     s.proc.commit_inst //= s.commit_inst
 

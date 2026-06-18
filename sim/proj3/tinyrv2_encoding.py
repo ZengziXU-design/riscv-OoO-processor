@@ -33,9 +33,9 @@ from pymtl3.stdlib.proc import SparseMemoryImage
 
 # NOTE: We have commented out the subword load/stores since these are not
 # currently implemented in the RTL processor. If we have them in the
-# ProcFL model but not the RTL model, then code can work on ProcFL but
-# then fail in confusing ways on the RTL model. We would rather the code
-# fail with an illegal instruction when using ProcFL.
+# processor core. If they are accepted by the assembler but not implemented
+# in RTL, tests can fail in confusing ways later in simulation. We would
+# rather fail early with an illegal instruction.
 
 tinyrv2_encoding_table = \
 [

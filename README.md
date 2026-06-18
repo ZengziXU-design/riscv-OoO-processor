@@ -1,21 +1,30 @@
-# RISC-V Out-of-Order Processor
+# RISC-V Dual-Issue Out-of-Order Processor
 
-This repository contains a single-issue out-of-order processor based on a RISC-V/TinyRV2 subset. The design focuses on out-of-order execution for arithmetic and memory/CSR-style programs while keeping the architectural state precise through in-order commit.
+This repository contains a dual-issue out-of-order processor based on a
+RISC-V/TinyRV2 subset. The current design fetches two 32-bit instructions at a
+time, dispatches and renames up to two instructions per cycle, issues up to two
+ready instructions per cycle, and keeps architectural state precise through
+in-order ROB commit.
 
-The core supports integer arithmetic instructions, CSR manager I/O instructions, and `lw`/`sw` memory instructions. Control-flow instructions such as branches, `jal`, and `jalr` are intentionally out of scope for this version. To make out-of-order behavior easy to observe, the integer multiplier is implemented as a fixed 4-cycle pipeline, so independent younger instructions can issue and write back while older multiply-dependent instructions wait.
+The core supports integer arithmetic instructions, CSR manager I/O instructions,
+and `lw`/`sw` memory instructions. Control-flow instructions such as branches,
+`jal`, and `jalr` are intentionally out of scope for this version. To make
+out-of-order behavior easy to observe, the integer multiplier is implemented as
+a fixed 4-cycle pipeline, so independent younger instructions can issue and
+write back while older multiply-dependent instructions wait.
 
 ## Repository Layout
 
-The RTL and PyMTL3 wrappers live under `sim/`. The repository also includes annotated images used in this README and the full design report.
+The RTL and PyMTL3 wrappers live under `sim/`. This branch focuses on the
+dual-issue OoO processor itself; base-core comparison code and system-level
+wrappers are not part of this version.
 
 ```text
 .
 |-- README.md
-|-- OoO_proc_design_report.pdf
 |-- images/
-|   |-- OoO_Datapath.jpg
-|   |-- OoO-post-pnr-breakdown.jpg
-|   `-- linetrace_breakdown.jpg
+|   |-- dualissue-ooo-proc-diagram.png
+|   `-- ...
 `-- sim/
     |-- proj3/
     |   |-- ProcOoO.v / ProcOoO.py
@@ -26,10 +35,9 @@ The RTL and PyMTL3 wrappers live under `sim/`. The repository also includes anno
     |   |-- ProcReorderBuffer.v
     |   |-- ProcPregfile.v
     |   |-- ProcMemunit.v
-    |   |-- OoO_SingleCoreSys.v / OoO_SingleCoreSys.py
+    |   |-- ProcOoO_linetrace_helper.v
+    |   |-- proc-sim
     |   `-- test/
-    |-- cache/
-    |-- sram/
     |-- vc/
     |-- pytest.ini
     `-- pymtl.ini
@@ -37,88 +45,61 @@ The RTL and PyMTL3 wrappers live under `sim/`. The repository also includes anno
 
 ## Test Environment
 
-The test infrastructure is based on Cornell's open-source PyMTL3 framework and `pytest`. Most tests are written in Python and instantiate either PyMTL3 models or Verilog placeholders through PyMTL3 wrappers.
+The test infrastructure is based on Cornell's open-source PyMTL3 framework and
+`pytest`. Most tests are written in Python and instantiate either PyMTL3 models
+or Verilog modules through PyMTL3 wrappers.
 
-This repository does not vendor the full Cornell course environment, so running the tests requires a compatible PyMTL3/pytest setup with the course support libraries available. The checked-in tests include module-level unit tests, processor-level directed tests, random differential tests, and system-level tests.
+This repository does not vendor the full Cornell course environment, so running
+the tests requires a compatible PyMTL3/pytest setup with the course support
+libraries available. The checked-in tests include module-level unit tests and
+processor-level directed tests for arithmetic, immediate, CSR, memory, rename,
+issue, writeback, and ROB behavior.
 
 ## Design Overview
 
-![OoO Datapath](images/OoO_Datapath.jpg)
+![Dual-Issue OoO Processor Diagram](images/dualissue-ooo-proc-diagram.png)
 
-At a high level, the processor can be understood through four visible stages:
+At a high level, the processor can be understood through five visible stages:
 
 ```text
-Dispatch -> Issued -> Writeback -> Commit
-                |
-          ALU / MUL / MEM
+Fetch2 -> Dispatch2 -> Issue Queue -> Issue0/Issue1 -> Writeback -> Commit2
+                              |
+                    ALU0 / ALU1 / MUL / MEM
 ```
 
-`Dispatch` performs predecode, register renaming, and ROB allocation. Architectural registers such as `x04` are mapped onto physical registers such as `p02`, and each instruction receives a ROB tag before entering the Issue Queue.
+`Fetch2` requests two sequential instructions together. The front end only
+advances when both instruction slots are available, which keeps the current
+dual-fetch contract simple.
 
-`Issued` represents the point where the Issue Queue selects an instruction whose operands are ready. After issue, the instruction enters one of three execution lanes: a 1-cycle ALU, a fixed 4-cycle multiplier, or the memory unit. These execution lanes sit between `Issued` and `Writeback` and are treated as black-box functional stages in the README-level view.
+`Dispatch2` performs predecode, register renaming, and ROB allocation for up to
+two instructions in program order. Architectural registers such as `x04` are
+mapped onto physical registers such as `p02`, and each instruction receives a
+ROB tag before entering the Issue Queue.
 
-`Writeback` writes results into the Physical Register File and broadcasts wakeup information back to the Issue Queue. The design has separate writeback paths for ALU results, multiply results, and load results.
+The `Issue Queue` stores the original instruction bits, renamed physical source
+and destination registers, and ROB tags. It intentionally does not store full
+decoded control signals, which keeps dispatch routing flexible as execution
+lanes are added.
 
-`Commit` is controlled by the Reorder Buffer. Instructions may issue and write back out of order, but they commit in program order. At commit time, the old physical destination register can be returned to the freelist.
+`Issue0/Issue1` represents the point where the Issue Queue selects up to two
+ready instructions. Ready instructions are routed onto one of four execution
+channels: `ALU0`, `ALU1`, `MUL`, or `MEM`. CSR-style operations share the ALU0
+path.
+
+`Writeback` writes results into the Physical Register File and broadcasts wakeup
+information back to the Issue Queue. The design has separate writeback feedback
+paths for ALU0, ALU1, multiply, and memory results.
+
+`Commit2` is controlled by the Reorder Buffer. Instructions may issue and write
+back out of order, but they commit in program order. The ROB can commit zero,
+one, or two consecutive ready instructions per cycle, and the old physical
+destination registers are returned to the freelist at commit time.
 
 Key structures in the design include:
 
+- Two-wide instruction fetch and dispatch front end
 - Register Rename Unit with RAT and freelist
 - 64-entry Physical Register File
-- 4-entry Issue Queue with scoreboard-based wakeup
-- 8-entry Reorder Buffer for in-order commit
-- 1-cycle ALU, 4-cycle pipelined multiplier, and single-in-flight memory unit
-
-## Linetrace Walkthrough
-
-![Linetrace Breakdown](images/linetrace_breakdown.jpg)
-
-The annotated linetrace shows a slice of the `dotprod-unrolled` benchmark. It is organized around the same four-stage view:
-
-| Column | Meaning |
-| --- | --- |
-| Fetch | PC address of the fetched instruction |
-| Dispatch | ROB index and architectural instruction before entering the Issue Queue |
-| Issued | Instruction selected by the Issue Queue, shown with physical register operands |
-| Writeback | Functional-unit result returning to the Physical Register File |
-| Commit | In-order ROB retirement and freed physical register |
-
-The trace makes the renaming and OoO behavior visible. In the Dispatch column, instructions still use architectural registers like `x04`. In the Issued column, those operands have been renamed to physical registers like `p02` and `p33`. The Writeback column shows which functional unit produced a value, such as `alu:p02`, `mul:p03`, or `lw:p38`.
-
-Even when writeback events occur out of program order, the Commit column retires instructions through the ROB in order. The `free:pXX` field shows the previous physical register mapping being released back to the freelist.
-
-## Physical Design Snapshot
-
-![Post-PNR Breakdown](images/OoO-post-pnr-breakdown.jpg)
-
-The post-place-and-route breakdown highlights the main hardware blocks in the OoO core. The Physical Register File dominates the layout, which matches the expected cost of register renaming. The Issue Queue, Rename Unit, Reorder Buffer, Memory Unit, 4-cycle multiplier, and ALU are also visible as separate structures.
-
-This view is useful for understanding the physical cost of the OoO mechanisms: the processor gains latency-hiding through renaming, dynamic scheduling, and in-order commit, but these structures add significant storage and control logic compared with a simple in-order core.
-
-## Verification Summary
-
-The final design was verified with several layers of tests:
-
-- Reused arithmetic, immediate, CSR, and memory instruction tests
-- Directed OoO tests for rename hazards, IQ wakeup, ROB commit, freelist recycling, and memory ordering
-- Module-level tests for `ProcRenameUnit`, `ProcIssueQueue`, `ProcReorderBuffer`, `ProcPregfile`, and `ProcMemunit`
-- Random differential tests comparing the OoO processor against the functional-level reference model
-- System-level tests with instruction and data caches
-
-The detailed methodology and quantitative results are described in the design report.
-
-## Design Report
-
-For the full architecture discussion, testing strategy, performance analysis, and physical design results, see [OoO_proc_design_report.pdf](OoO_proc_design_report.pdf).
-
-## Running An Evaluation
-
-With a compatible PyMTL3/Cornell course environment installed, the OoO processor can be evaluated through the `proc-sim` harness. From the repository root:
-
-```bash
-mkdir -p ./sim/build
-cd ./sim/build
-../proj3/proc-sim --impl ooo --input dotprod-unopt-unrolled --trace --verify --stats
-```
-
-This runs the OoO RTL model on the unrolled dot-product benchmark, prints the linetrace, checks the final memory/register results, and reports simulation statistics.
+- 8-entry Issue Queue with scoreboard-based wakeup
+- 16-entry Reorder Buffer with two-wide allocate and two-wide commit
+- Two 1-cycle ALUs, a 4-cycle pipelined multiplier, and a memory unit
